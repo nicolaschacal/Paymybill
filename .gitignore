@@ -1,0 +1,11 @@
+target/
+node_modules/
+dist/
+.anchor/
+.env
+.env.local
+*.log
+.DS_Store
+test-ledger/
+# never commit program keypairs
+**/*-keypair.json

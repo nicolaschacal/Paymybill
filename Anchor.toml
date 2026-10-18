@@ -1,0 +1,18 @@
+[toolchain]
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+paymybill = "FNzupK1JHWbwtYK1JhHsscQP5A84y9gaUZ5dznx6JTFt"
+
+[programs.devnet]
+paymybill = "FNzupK1JHWbwtYK1JhHsscQP5A84y9gaUZ5dznx6JTFt"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"
