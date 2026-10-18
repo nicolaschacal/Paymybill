@@ -6,9 +6,9 @@
 //!     no counters, no user profiles, no escrow, no token accounts.
 //!   * Non-custodial: funds go straight from the payer to the creator's
 //!     wallet inside the same transaction that marks the bill as paid.
-//!   * Service fee: the payer adds FEE_BPS (3%) on top of the bill amount,
-//!     sent to FEE_WALLET in that same transaction. The creator always
-//!     receives the full bill amount.
+//!   * Service fee: FEE_BPS (3%) of the bill amount is taken out of what the
+//!     creator receives and sent to FEE_WALLET in that same transaction. The
+//!     payer always pays exactly the bill amount.
 //!
 //! A bill PDA is derived from `["bill", creator, id_le_bytes]`, where `id` is a
 //! random u64 picked by the client (so no counter account is needed).
@@ -21,7 +21,7 @@ declare_id!("6LgTZEVfPX2a3ouR9suAaozexXNjyJ8S4EqNRYFKX8x3");
 pub const TITLE_MAX: usize = 48;
 pub const NOTE_MAX: usize = 160;
 
-/// Service fee in basis points (300 = 3%), paid by the payer on top of the bill.
+/// Service fee in basis points (300 = 3%), deducted from what the creator receives.
 pub const FEE_BPS: u64 = 300;
 
 /// Wallet that receives the service fee. Changing it needs a program upgrade.
@@ -68,12 +68,13 @@ pub mod paymybill {
         Ok(())
     }
 
-    /// Pay an open bill in full. SOL moves payer -> creator (the full bill
-    /// amount) and payer -> FEE_WALLET (the service fee) atomically, and the
-    /// bill is stamped as paid. The program never holds funds.
+    /// Pay an open bill in full. The payer sends exactly `amount`: the creator
+    /// receives `amount - fee` and FEE_WALLET receives `fee`, atomically, and
+    /// the bill is stamped as paid. The program never holds funds.
     pub fn pay_bill(ctx: Context<PayBill>) -> Result<()> {
         let amount = ctx.accounts.bill.amount;
         let fee = fee_for(amount);
+        let to_creator = amount - fee; // fee <= amount always (3%)
 
         transfer(
             CpiContext::new(
@@ -83,7 +84,7 @@ pub mod paymybill {
                     to: ctx.accounts.creator.to_account_info(),
                 },
             ),
-            amount,
+            to_creator,
         )?;
 
         if fee > 0 {

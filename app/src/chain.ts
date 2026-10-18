@@ -23,7 +23,7 @@ export const PROGRAM_ID = new PublicKey(
   env.VITE_PROGRAM_ID || "6LgTZEVfPX2a3ouR9suAaozexXNjyJ8S4EqNRYFKX8x3",
 );
 
-/** Service fee, paid by the payer on top of the bill. Must match the program. */
+/** Service fee, deducted from what the creator receives. Must match the program. */
 export const FEE_BPS = 300n;
 export const FEE_WALLET = new PublicKey("AQfKYtAVyZARgKxSt6ZpqwLAtDNeE1LF8Jk5FYWteqbv");
 export const feeFor = (lamports: bigint): bigint => (lamports * FEE_BPS) / 10_000n;

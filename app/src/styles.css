@@ -606,6 +606,41 @@ textarea::placeholder {
   font-weight: 900;
   letter-spacing: -0.02em;
 }
+.check {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 14px;
+  margin: -6px 0 16px !important;
+  cursor: pointer;
+}
+.check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--red);
+  padding: 0;
+}
+.summary {
+  display: flex;
+  gap: 10px;
+  margin: 0 0 18px;
+}
+.summary > div {
+  flex: 1;
+  background: rgba(43, 29, 20, 0.05);
+  border-radius: 14px;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.summary b {
+  display: block;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 900;
+}
 .breakdown {
   margin: 12px 0 0;
   font-size: 14px;

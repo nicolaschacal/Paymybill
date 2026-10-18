@@ -16,7 +16,7 @@ Create a profile-less bill ("Electricity, October — 0.06 SOL"), share the link
 | Instruction | Who | What |
 | --- | --- | --- |
 | `create_bill(id, amount, title, note)` | creator | Creates the bill PDA (title ≤ 48 bytes, note ≤ 160 bytes). |
-| `pay_bill()` | anyone but the creator | Transfers `amount` lamports to the creator, a 3% service fee on top to the fee wallet, and marks the bill paid. |
+| `pay_bill()` | anyone but the creator | Takes `amount` from the payer: 97% to the creator, 3% of it to the fee wallet instead (the payer pays exactly the bill amount), and marks the bill paid. |
 | `close_bill()` | creator | Closes an open or paid bill and refunds the rent. |
 
 Amounts are in SOL. The UI can take USD and converts at the current rate when posting (rate from Coinbase's public API; only a convenience, the bill is priced in SOL).
@@ -55,7 +55,7 @@ Set `VITE_RPC_URL` to your own RPC for real use: public endpoints rate-limit `ge
 
 ## Things to know
 
-- The payer adds a 3% service fee on top of the bill (`FEE_BPS` and `FEE_WALLET` in the program, mirrored in `app/src/chain.ts`). The creator always receives the full amount. Changing the fee wallet or rate needs a program upgrade.
+- A 3% service fee is deducted from what the creator receives (`FEE_BPS` and `FEE_WALLET` in the program, mirrored in `app/src/chain.ts`); the payer pays exactly the bill amount. Creators can tick "add the fee on top" when posting to net the full amount. Changing the fee wallet or rate needs a program upgrade.
 - Anyone can post any bill. The UI says so and payments are final, so only pay people you want to help.
 - The frontend encodes instructions by hand (no generated IDL). The discriminators and account layout are pinned by the Rust tests in `programs/paymybill/src/lib.rs`; if you change the program, update `app/src/chain.ts` to match.
 - The program id in the repo is a placeholder until the first `deploy` run commits the real one.
