@@ -63,7 +63,32 @@ jobs:
             echo "Secret ADMIN_KEYPAIR is not set. Add it in Settings > Secrets and variables > Actions."
             exit 1
           fi
-          printf '%s' "$ADMIN_KEYPAIR" > artifacts/private/admin-keypair.json
+          # Accepts the keypair JSON array ([12,34,...], 64 numbers) or the base58
+          # secret key string that Phantom/Solflare export. Only lengths are
+          # printed, never the value.
+          python3 - <<'PY'
+          import json, os, sys
+          raw = os.environ["ADMIN_KEYPAIR"].strip().strip('"').strip("'").strip()
+          A = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+          try:
+              if raw.startswith("["):
+                  arr = json.loads(raw)
+              else:
+                  n = 0
+                  for ch in raw:
+                      n = n * 58 + A.index(ch)
+                  b = n.to_bytes((n.bit_length() + 7) // 8, "big")
+                  pad = len(raw) - len(raw.lstrip("1"))
+                  arr = list(b"\0" * pad + b)
+              ok = isinstance(arr, list) and len(arr) == 64 and all(isinstance(x, int) and 0 <= x < 256 for x in arr)
+              if not ok:
+                  sys.exit("ADMIN_KEYPAIR parsed but is not 64 bytes (got %s items)" % (len(arr) if isinstance(arr, list) else "non-list"))
+          except SystemExit:
+              raise
+          except Exception:
+              sys.exit("ADMIN_KEYPAIR is neither a JSON array of 64 numbers nor a base58 secret key (length %d, starts with '[': %s)" % (len(raw), raw.startswith("[")))
+          open("artifacts/private/admin-keypair.json", "w").write(json.dumps(arr))
+          PY
           chmod 600 artifacts/private/admin-keypair.json
           echo "Wallet: $(solana-keygen pubkey artifacts/private/admin-keypair.json)"
 
