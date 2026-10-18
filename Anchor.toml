@@ -7,10 +7,10 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-paymybill = "FNzupK1JHWbwtYK1JhHsscQP5A84y9gaUZ5dznx6JTFt"
+paymybill = "6LgTZEVfPX2a3ouR9suAaozexXNjyJ8S4EqNRYFKX8x3"
 
 [programs.devnet]
-paymybill = "FNzupK1JHWbwtYK1JhHsscQP5A84y9gaUZ5dznx6JTFt"
+paymybill = "6LgTZEVfPX2a3ouR9suAaozexXNjyJ8S4EqNRYFKX8x3"
 
 [provider]
 cluster = "devnet"

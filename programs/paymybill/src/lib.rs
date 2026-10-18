@@ -16,7 +16,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program::{transfer, Transfer};
 
-declare_id!("FNzupK1JHWbwtYK1JhHsscQP5A84y9gaUZ5dznx6JTFt");
+declare_id!("6LgTZEVfPX2a3ouR9suAaozexXNjyJ8S4EqNRYFKX8x3");
 
 pub const TITLE_MAX: usize = 48;
 pub const NOTE_MAX: usize = 160;

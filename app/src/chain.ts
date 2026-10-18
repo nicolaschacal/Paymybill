@@ -20,7 +20,7 @@ export const RPC_URL: string =
       ? "http://127.0.0.1:8899"
       : "https://api.devnet.solana.com");
 export const PROGRAM_ID = new PublicKey(
-  env.VITE_PROGRAM_ID || "FNzupK1JHWbwtYK1JhHsscQP5A84y9gaUZ5dznx6JTFt",
+  env.VITE_PROGRAM_ID || "6LgTZEVfPX2a3ouR9suAaozexXNjyJ8S4EqNRYFKX8x3",
 );
 
 /** Service fee, paid by the payer on top of the bill. Must match the program. */
