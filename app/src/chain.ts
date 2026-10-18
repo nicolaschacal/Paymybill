@@ -23,6 +23,11 @@ export const PROGRAM_ID = new PublicKey(
   env.VITE_PROGRAM_ID || "FNzupK1JHWbwtYK1JhHsscQP5A84y9gaUZ5dznx6JTFt",
 );
 
+/** Service fee, paid by the payer on top of the bill. Must match the program. */
+export const FEE_BPS = 300n;
+export const FEE_WALLET = new PublicKey("AQfKYtAVyZARgKxSt6ZpqwLAtDNeE1LF8Jk5FYWteqbv");
+export const feeFor = (lamports: bigint): bigint => (lamports * FEE_BPS) / 10_000n;
+
 export const TITLE_MAX = 48;
 export const NOTE_MAX = 160;
 export const BILL_ACCOUNT_SIZE = 322; // 8 + InitSpace (checked by a Rust test)
@@ -177,6 +182,7 @@ export function payBillIx(payer: PublicKey, bill: Bill): TransactionInstruction 
       { pubkey: payer, isSigner: true, isWritable: true },
       { pubkey: bill.address, isSigner: false, isWritable: true },
       { pubkey: bill.creator, isSigner: false, isWritable: true },
+      { pubkey: FEE_WALLET, isSigner: false, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     ],
     data: Buffer.from(IX_PAY),

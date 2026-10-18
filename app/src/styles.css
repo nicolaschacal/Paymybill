@@ -606,6 +606,17 @@ textarea::placeholder {
   font-weight: 900;
   letter-spacing: -0.02em;
 }
+.breakdown {
+  margin: 12px 0 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.breakdown > div {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 2px;
+}
 .row {
   display: flex;
   gap: 10px;

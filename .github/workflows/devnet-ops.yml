@@ -101,7 +101,7 @@ jobs:
           echo "Wallet: $(solana-keygen pubkey artifacts/private/admin-keypair.json)"
           echo "Program id: $PROGRAM_ID"
           solana balance --url devnet --keypair artifacts/private/admin-keypair.json
-          solana program show "$PROGRAM_ID" --url devnet || echo "Program not deployed yet"
+          solana program show "$PROGRAM_ID" --url devnet --keypair artifacts/private/admin-keypair.json || echo "Program not deployed yet"
 
       - name: airdrop (devnet faucet, may be rate limited)
         if: inputs.action == 'airdrop'
@@ -151,7 +151,7 @@ jobs:
           echo "Wallet: $(solana-keygen pubkey $W)"
           solana balance --url devnet --keypair "$W"
 
-          if out=$(solana program show "$PROGRAM_ID" --url devnet 2>&1); then
+          if out=$(solana program show "$PROGRAM_ID" --url devnet --keypair "$W" 2>&1); then
             MODE=upgrade
           elif echo "$out" | grep -qiE "unable to find|does not exist|AccountNotFound"; then
             MODE=new
@@ -186,7 +186,7 @@ jobs:
               --keypair "$W" \
               --upgrade-authority "$W"
           fi
-          solana program show "$PROGRAM_ID" --url devnet
+          solana program show "$PROGRAM_ID" --url devnet --keypair "$W"
 
       - name: Commit the program id after a first deploy
         if: success() && inputs.action == 'deploy' && env.NEW_PROGRAM_ID != ''

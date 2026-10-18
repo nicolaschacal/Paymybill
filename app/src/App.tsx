@@ -14,6 +14,7 @@ import {
   createBillIx,
   explorerAddr,
   explorerTx,
+  feeFor,
   fetchBill,
   fetchBills,
   fetchSolUsd,
@@ -464,7 +465,7 @@ function NewBill() {
       </label>
 
       <div className="fine">
-        Posting reserves a small refundable deposit{rent ? ` (~${rent.toFixed(4)} SOL)` : ""} on Solana. You get it back
+        Payers add a 3% service fee on top, so you receive the full amount. Posting reserves a small refundable deposit{rent ? ` (~${rent.toFixed(4)} SOL)` : ""} on Solana. You get it back
         when you close the bill.
       </div>
 
@@ -621,7 +622,9 @@ function BillPage({ addr }: { addr: string }) {
 
   const mine = !!publicKey && bill.creator.equals(publicKey);
   const short_ = short(bill.creator, 5);
-  const enough = balance === null || balance >= bill.lamports + 10_000n;
+  const fee = feeFor(bill.lamports);
+  const total = bill.lamports + fee;
+  const enough = balance === null || balance >= total + 10_000n;
 
   async function pay() {
     if (!publicKey || !bill) return;
@@ -711,10 +714,11 @@ function BillPage({ addr }: { addr: string }) {
       ) : step === "view" ? (
         <div className="pay-box">
           <button className="btn red lg block" onClick={() => setStep("confirm")}>
-            Pay {fmtSol(bill.lamports)} SOL
+            Pay {fmtSol(total)} SOL
           </button>
           <div className="fine">
-            Anyone can post a bill. Only pay people you want to help.
+            {fmtSol(bill.lamports)} SOL goes to the bill’s creator, plus a 3% service fee. Anyone can post a bill, so
+            only pay people you want to help.
           </div>
         </div>
       ) : (
@@ -722,16 +726,27 @@ function BillPage({ addr }: { addr: string }) {
           <div className="sum">
             <div>
               You send
-              <b>{fmtSol(bill.lamports)} SOL</b>
+              <b>{fmtSol(total)} SOL</b>
             </div>
             <div>
               To
               <b title={bill.creator.toBase58()}>{short_}</b>
             </div>
           </div>
+          <div className="breakdown">
+            <div>
+              <span>Bill</span>
+              <span>{fmtSol(bill.lamports)} SOL</span>
+            </div>
+            <div>
+              <span>Service fee (3%)</span>
+              <span>{fmtSol(fee, 6)} SOL</span>
+            </div>
+          </div>
           {!enough && <div className="notice warn">Your wallet doesn’t have enough SOL ({fmtSol(balance ?? 0n)} available).</div>}
           <div className="fine">
-            The SOL goes straight from your wallet to theirs. Payments are final. Network fee ≈ 0.000005 SOL.
+            The bill amount goes straight from your wallet to theirs, and the fee to paymybill.fun. Payments are final.
+            Network fee ≈ 0.00001 SOL.
           </div>
           <div className="row">
             <button className="btn ghost" onClick={() => setStep("view")} disabled={busy}>

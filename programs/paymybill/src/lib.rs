@@ -6,6 +6,9 @@
 //!     no counters, no user profiles, no escrow, no token accounts.
 //!   * Non-custodial: funds go straight from the payer to the creator's
 //!     wallet inside the same transaction that marks the bill as paid.
+//!   * Service fee: the payer adds FEE_BPS (3%) on top of the bill amount,
+//!     sent to FEE_WALLET in that same transaction. The creator always
+//!     receives the full bill amount.
 //!
 //! A bill PDA is derived from `["bill", creator, id_le_bytes]`, where `id` is a
 //! random u64 picked by the client (so no counter account is needed).
@@ -17,6 +20,17 @@ declare_id!("FNzupK1JHWbwtYK1JhHsscQP5A84y9gaUZ5dznx6JTFt");
 
 pub const TITLE_MAX: usize = 48;
 pub const NOTE_MAX: usize = 160;
+
+/// Service fee in basis points (300 = 3%), paid by the payer on top of the bill.
+pub const FEE_BPS: u64 = 300;
+
+/// Wallet that receives the service fee. Changing it needs a program upgrade.
+pub const FEE_WALLET: Pubkey = pubkey!("AQfKYtAVyZARgKxSt6ZpqwLAtDNeE1LF8Jk5FYWteqbv");
+
+/// Fee owed on a bill of `amount` lamports (rounded down).
+pub fn fee_for(amount: u64) -> u64 {
+    ((amount as u128) * (FEE_BPS as u128) / 10_000u128) as u64
+}
 
 pub const STATUS_OPEN: u8 = 0;
 pub const STATUS_PAID: u8 = 1;
@@ -54,10 +68,12 @@ pub mod paymybill {
         Ok(())
     }
 
-    /// Pay an open bill in full. SOL moves payer -> creator atomically and the
+    /// Pay an open bill in full. SOL moves payer -> creator (the full bill
+    /// amount) and payer -> FEE_WALLET (the service fee) atomically, and the
     /// bill is stamped as paid. The program never holds funds.
     pub fn pay_bill(ctx: Context<PayBill>) -> Result<()> {
         let amount = ctx.accounts.bill.amount;
+        let fee = fee_for(amount);
 
         transfer(
             CpiContext::new(
@@ -69,6 +85,19 @@ pub mod paymybill {
             ),
             amount,
         )?;
+
+        if fee > 0 {
+            transfer(
+                CpiContext::new(
+                    ctx.accounts.system_program.key(),
+                    Transfer {
+                        from: ctx.accounts.payer.to_account_info(),
+                        to: ctx.accounts.fee_wallet.to_account_info(),
+                    },
+                ),
+                fee,
+            )?;
+        }
 
         let bill = &mut ctx.accounts.bill;
         bill.status = STATUS_PAID;
@@ -115,6 +144,9 @@ pub struct PayBill<'info> {
     /// CHECK: must equal the creator stored in the bill; it only receives SOL.
     #[account(mut, address = bill.creator)]
     pub creator: UncheckedAccount<'info>,
+    /// CHECK: must be the hard-coded FEE_WALLET; it only receives SOL.
+    #[account(mut, address = FEE_WALLET @ BillError::WrongFeeWallet)]
+    pub fee_wallet: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -159,6 +191,8 @@ pub enum BillError {
     AlreadyPaid,
     #[msg("You cannot pay your own bill")]
     SelfPay,
+    #[msg("Fee wallet account does not match the program's fee wallet")]
+    WrongFeeWallet,
 }
 
 #[cfg(test)]
@@ -184,6 +218,15 @@ mod tests {
             &[0xed, 0x6c, 0x97, 0x43, 0xf9, 0x53, 0xf7, 0xfa][..]
         );
         assert_eq!(8 + Bill::INIT_SPACE, 322);
+    }
+
+    #[test]
+    fn fee_is_three_percent_rounded_down() {
+        assert_eq!(fee_for(1_000_000_000), 30_000_000);
+        assert_eq!(fee_for(62_000_000), 1_860_000);
+        assert_eq!(fee_for(33), 0);
+        assert_eq!(fee_for(34), 1);
+        assert_eq!(fee_for(u64::MAX), (u64::MAX as u128 * 300 / 10_000) as u64);
     }
 
     #[test]
