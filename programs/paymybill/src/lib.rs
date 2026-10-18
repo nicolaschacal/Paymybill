@@ -61,7 +61,7 @@ pub mod paymybill {
 
         transfer(
             CpiContext::new(
-                ctx.accounts.system_program.to_account_info(),
+                ctx.accounts.system_program.key(),
                 Transfer {
                     from: ctx.accounts.payer.to_account_info(),
                     to: ctx.accounts.creator.to_account_info(),

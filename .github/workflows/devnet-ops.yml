@@ -1,0 +1,199 @@
+name: devnet-ops
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What to run"
+        required: true
+        type: choice
+        options:
+          - status
+          - airdrop
+          - test
+          - test-app
+          - build
+          - deploy
+
+permissions:
+  contents: write
+
+env:
+  SOLANA_RPC_URL: https://api.devnet.solana.com
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Solana CLI 4.1.2
+        run: |
+          curl -sSfL -o solana.tar.bz2 https://github.com/anza-xyz/agave/releases/download/v4.1.2/solana-release-x86_64-unknown-linux-gnu.tar.bz2
+          tar xjf solana.tar.bz2
+          echo "$PWD/solana-release/bin" >> "$GITHUB_PATH"
+
+      - name: Install Anchor 1.2.0
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL -o "$HOME/.local/bin/anchor" https://github.com/coral-xyz/anchor/releases/download/v1.2.0/anchor-1.2.0-x86_64-unknown-linux-gnu
+          chmod +x "$HOME/.local/bin/anchor"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Admin wallet (devnet) from secret
+        env:
+          ADMIN_KEYPAIR: ${{ secrets.ADMIN_KEYPAIR }}
+        run: |
+          mkdir -p artifacts/private
+          if [ -z "$ADMIN_KEYPAIR" ]; then
+            if [ "${{ inputs.action }}" = "test" ] || [ "${{ inputs.action }}" = "build" ] || [ "${{ inputs.action }}" = "test-app" ]; then
+              echo "No ADMIN_KEYPAIR secret: using a throwaway wallet for this action."
+              solana-keygen new --no-bip39-passphrase --silent --force -o artifacts/private/admin-keypair.json
+              exit 0
+            fi
+            echo "Secret ADMIN_KEYPAIR is not set. Add it in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          printf '%s' "$ADMIN_KEYPAIR" > artifacts/private/admin-keypair.json
+          chmod 600 artifacts/private/admin-keypair.json
+          echo "Wallet: $(solana-keygen pubkey artifacts/private/admin-keypair.json)"
+
+      - name: status
+        if: inputs.action == 'status'
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/ops.log") 2>&1
+          trap 'exec >&- 2>&-; sleep 2' EXIT
+          PROGRAM_ID=$(grep -oP 'paymybill = "\K[^"]+' Anchor.toml | tail -1)
+          echo "Wallet: $(solana-keygen pubkey artifacts/private/admin-keypair.json)"
+          echo "Program id: $PROGRAM_ID"
+          solana balance --url devnet --keypair artifacts/private/admin-keypair.json
+          solana program show "$PROGRAM_ID" --url devnet || echo "Program not deployed yet"
+
+      - name: airdrop (devnet faucet, may be rate limited)
+        if: inputs.action == 'airdrop'
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/ops.log") 2>&1
+          trap 'exec >&- 2>&-; sleep 2' EXIT
+          W=artifacts/private/admin-keypair.json
+          for i in 1 2 3; do
+            solana airdrop 2 --url devnet --keypair "$W" || echo "airdrop $i failed (faucet limit?)"
+            sleep 3
+          done
+          solana balance --url devnet --keypair "$W"
+
+      - name: test
+        if: inputs.action == 'test'
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/ops.log") 2>&1
+          trap 'exec >&- 2>&-; sleep 2' EXIT
+          cargo test --lib
+
+      - name: test-app
+        if: inputs.action == 'test-app'
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/ops.log") 2>&1
+          trap 'exec >&- 2>&-; sleep 2' EXIT
+          cd app && npm ci && npm run build
+
+      - name: build
+        if: inputs.action == 'build'
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/ops.log") 2>&1
+          trap 'exec >&- 2>&-; sleep 2' EXIT
+          anchor build
+          ls -la target/deploy
+
+      # First run: the program does not exist on devnet yet, so a fresh program
+      # keypair is generated, its address is written into the repo, and the
+      # program is deployed at that address (the program keypair is discarded;
+      # the admin wallet stays the upgrade authority). Later runs just upgrade.
+      - name: deploy (first deploy or upgrade)
+        if: inputs.action == 'deploy'
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/ops.log") 2>&1
+          trap 'exec >&- 2>&-; sleep 2' EXIT
+          W=artifacts/private/admin-keypair.json
+          PROGRAM_ID=$(grep -oP 'paymybill = "\K[^"]+' Anchor.toml | tail -1)
+          echo "Wallet: $(solana-keygen pubkey $W)"
+          solana balance --url devnet --keypair "$W"
+
+          if out=$(solana program show "$PROGRAM_ID" --url devnet 2>&1); then
+            MODE=upgrade
+          elif echo "$out" | grep -qiE "unable to find|does not exist|AccountNotFound"; then
+            MODE=new
+          else
+            echo "$out"
+            echo "Could not tell whether $PROGRAM_ID exists on devnet. Aborting."
+            exit 1
+          fi
+          echo "Mode: $MODE"
+
+          if [ "$MODE" = "new" ]; then
+            anchor build
+            NEW_ID=$(solana-keygen pubkey target/deploy/paymybill-keypair.json)
+            echo "New program id: $NEW_ID"
+            for f in programs/paymybill/src/lib.rs Anchor.toml app/.env.example app/src/chain.ts README.md; do
+              [ -f "$f" ] && sed -i "s/$PROGRAM_ID/$NEW_ID/g" "$f"
+            done
+            grep -q "$NEW_ID" programs/paymybill/src/lib.rs || { echo "declare_id! was not updated"; exit 1; }
+            anchor build
+            solana program deploy target/deploy/paymybill.so \
+              --program-id target/deploy/paymybill-keypair.json \
+              --url devnet \
+              --keypair "$W" \
+              --upgrade-authority "$W"
+            PROGRAM_ID="$NEW_ID"
+            echo "NEW_PROGRAM_ID=$NEW_ID" >> "$GITHUB_ENV"
+          else
+            anchor build
+            solana program deploy target/deploy/paymybill.so \
+              --program-id "$PROGRAM_ID" \
+              --url devnet \
+              --keypair "$W" \
+              --upgrade-authority "$W"
+          fi
+          solana program show "$PROGRAM_ID" --url devnet
+
+      - name: Commit the program id after a first deploy
+        if: success() && inputs.action == 'deploy' && env.NEW_PROGRAM_ID != ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add programs/paymybill/src/lib.rs Anchor.toml app/.env.example app/src/chain.ts README.md || true
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+          else
+            git commit -m "devnet-ops: program id ${NEW_PROGRAM_ID} after first deploy"
+            out=$( { git pull --rebase --autostash origin main && git push origin HEAD:main; } 2>&1 ) || {
+              m=$(printf '%s' "$out" | tail -n 15 | python3 -c 'import sys; t=sys.stdin.read(); print(t.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))')
+              echo "::error title=git-push-failed::${m}"
+              exit 1
+            }
+          fi
+
+      - name: Surface log tail as annotation
+        if: always()
+        run: |
+          sleep 2
+          f="$RUNNER_TEMP/ops.log"
+          [ -f "$f" ] || exit 0
+          msg=$(grep -v "^ *Compiling \|^ *Downloaded \|^ *Downloading " "$f" | tail -n 120 | python3 -c 'import sys; t=sys.stdin.read(); print(t.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))')
+          echo "::notice title=ops-log-tail::${msg}"
+
+      - name: Upload outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devnet-ops-${{ inputs.action }}
+          if-no-files-found: ignore
+          path: |
+            target/deploy/paymybill.so

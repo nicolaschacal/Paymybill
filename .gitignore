@@ -9,3 +9,6 @@ dist/
 test-ledger/
 # never commit program keypairs
 **/*-keypair.json
+
+# admin wallet written by CI from the ADMIN_KEYPAIR secret; never commit
+artifacts/private

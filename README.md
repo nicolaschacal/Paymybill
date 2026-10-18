@@ -30,21 +30,21 @@ app/                  Vite + React static frontend
 
 ## Run it
 
-### Program (e.g. in a Codespace with Anchor installed)
+### Program (GitHub Actions, devnet)
 
-```bash
-anchor build
-anchor keys sync          # writes your real program id into lib.rs and Anchor.toml
-anchor build
-anchor deploy --provider.cluster devnet
-cargo test --lib          # layout + discriminator checks the frontend relies on
-```
+Build and deploy run in the `devnet-ops` workflow (Actions tab → devnet-ops → Run workflow). The admin wallet is the repo secret `ADMIN_KEYPAIR` (the keypair JSON, pasted in Settings → Secrets and variables → Actions); CI writes it to a temporary file and it is never committed.
+
+1. `airdrop` funds the admin wallet with devnet SOL (or send some to it yourself).
+2. `deploy` builds and deploys. The first run creates the program address, writes it into the repo and commits it; later runs upgrade the same program.
+3. `status` shows the wallet balance and the deployed program.
+
+Locally, `cargo test --lib` checks the layout and discriminators the frontend relies on.
 
 ### App
 
 ```bash
 cd app
-cp .env.example .env      # set VITE_PROGRAM_ID to the id printed by `anchor keys list`
+cp .env.example .env      # set VITE_PROGRAM_ID to the program id in Anchor.toml
 npm install
 npm run dev
 ```
@@ -57,4 +57,4 @@ Set `VITE_RPC_URL` to your own RPC for real use: public endpoints rate-limit `ge
 
 - Anyone can post any bill. The UI says so and payments are final, so only pay people you want to help.
 - The frontend encodes instructions by hand (no generated IDL). The discriminators and account layout are pinned by the Rust tests in `programs/paymybill/src/lib.rs`; if you change the program, update `app/src/chain.ts` to match.
-- The program id in the repo is a placeholder until you run `anchor keys sync`.
+- The program id in the repo is a placeholder until the first `deploy` run commits the real one.

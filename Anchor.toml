@@ -1,3 +1,5 @@
+skip_local_validator = true
+
 [toolchain]
 
 [features]
@@ -10,9 +12,9 @@ paymybill = "FNzupK1JHWbwtYK1JhHsscQP5A84y9gaUZ5dznx6JTFt"
 [programs.devnet]
 paymybill = "FNzupK1JHWbwtYK1JhHsscQP5A84y9gaUZ5dznx6JTFt"
 
-[registry]
-url = "https://api.apr.dev"
-
 [provider]
 cluster = "devnet"
-wallet = "~/.config/solana/id.json"
+wallet = "artifacts/private/admin-keypair.json"
+
+[scripts]
+test = "cargo test --lib"

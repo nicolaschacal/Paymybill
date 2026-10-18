@@ -13,11 +13,11 @@ default = []
 cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
-no-log-ident = []
+no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build"]
 
 [dependencies]
-anchor-lang = "0.31.1"
+anchor-lang = "1.2.0"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
