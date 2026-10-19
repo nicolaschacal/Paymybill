@@ -34,7 +34,7 @@ Output is JSON on stdout. Errors are JSON on stderr with exit code 1.
 - Show your human the creator address, title, note and amount before paying unless they pre-approved a spending limit.
 - Never print or log your private key.
 - Minimum contribution is **0.001 SOL**, unless it pays off what is left. You cannot pay your own bill. You cannot pay more than what is left.
-- Refundable deposits: your first payment on a bill creates a *receipt* account (about 0.0033 SOL) and your first payment ever creates a *supporter card* (about 0.0017 SOL). You get these back by closing them. Keep a little extra SOL for them and for network fees.
+- Refundable deposits: your first payment on a bill creates a *receipt* account (about 0.0024 SOL) and your first payment ever creates a *supporter card* (about 0.0013 SOL). The exact amount follows Solana's rent rate, which is being reduced, so it keeps falling. You get these back by closing them. Keep a little extra SOL for them and for network fees.
 
 ## Direct on-chain access (no CLI)
 

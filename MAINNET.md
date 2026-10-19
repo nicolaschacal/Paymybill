@@ -4,14 +4,18 @@ Do these in order. Nothing here is done automatically.
 
 ## 1. Money you need
 
-Program rent is locked while the program exists (recoverable only by closing the program). The current build is about 224 KB (devnet data length 223,640 bytes), which by the rent formula `(bytes + 173) x 6,960 lamports` is about 1.56 SOL. Check the exact number right before deploying with `solana rent 223640`.
+Program rent is locked while the program exists (recoverable only by closing the program). Solana is cutting the rent rate in five steps (SIMD-0437), so this number keeps falling. Formula: `(binary bytes + 173) x lamports_per_byte`.
+
+- Measured on devnet today: the current ~224 KB build holds **1.137 SOL** (5,080 lamports per byte, the step-2 rate).
+- Mainnet followed the same schedule (step 2 reported live in September 2026), but confirm the live rate right before deploying: `solana rent 223640 --url mainnet-beta`.
+- Steps 3 to 5 are expected with Agave 4.4 (about November 2026, no fixed date): 2,575 / 1,322 / 696 lamports per byte, which would make the same program cost about 0.58 / 0.30 / 0.16 SOL.
 
 | Item | Amount |
 | --- | --- |
-| Program rent (locked) | about 1.6 SOL |
-| Temporary buffer during deploy (refunded) | about 1.6 SOL more, returned when the deploy ends |
+| Program rent (locked) | about 1.14 SOL today, about 0.16 SOL once the rent cut is complete |
+| Temporary buffer during deploy (refunded) | about the same again, returned when the deploy ends |
 | Fees and margin | 0.05 SOL |
-| **Have in the deploy wallet** | **about 3.5 SOL** (1.6 + 1.6 + margin) |
+| **Have in the deploy wallet** | **about 2.5 SOL** today (1.14 + 1.14 + margin) |
 | Fee wallet starting balance (must never reach 0) | 0.01 SOL or more |
 | Paid RPC (Helius, Triton, QuickNode...) | their monthly plan |
 | Domain `paymybill.fun` | registrar price |
