@@ -879,3 +879,9 @@ textarea::placeholder {
     margin-left: auto;
   }
 }
+
+.more {
+  display: flex;
+  justify-content: center;
+  margin-top: 18px;
+}

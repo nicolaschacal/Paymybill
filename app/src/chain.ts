@@ -213,6 +213,45 @@ export async function fetchReceipt(conn: Connection, address: PublicKey): Promis
   return decodeReceipt(address, info.data);
 }
 
+/** Lightweight listing: just the addresses of bills with this status, newest first.
+ *  Uses a data slice, so each account costs ~40 bytes on the wire instead of 322. */
+export interface BillRef {
+  address: PublicKey;
+  at: number; // createdAt for open bills, paidAt for paid ones
+}
+
+export async function listBillRefs(conn: Connection, status: 0 | 1): Promise<BillRef[]> {
+  const accts = await conn.getProgramAccounts(PROGRAM_ID, {
+    filters: [
+      { dataSize: BILL_ACCOUNT_SIZE },
+      { memcmp: { offset: 0, bytes: bs58.encode(BILL_DISC) } },
+      { memcmp: { offset: 8, bytes: bs58.encode(Uint8Array.of(status)) } },
+    ],
+    dataSlice: { offset: 58, length: 16 }, // created_at (i64) + paid_at (i64)
+    commitment: "confirmed",
+  });
+  const refs = accts.map((a) => {
+    const v = new DataView(a.account.data.buffer, a.account.data.byteOffset, a.account.data.byteLength);
+    return { address: a.pubkey, at: Number(v.getBigInt64(status === 1 ? 8 : 0, true)) };
+  });
+  return refs.sort((x, y) => y.at - x.at);
+}
+
+/** Full bills for a handful of addresses (closed ones are skipped). */
+export async function fetchBillsByAddress(conn: Connection, addrs: PublicKey[]): Promise<Bill[]> {
+  const out: Bill[] = [];
+  for (let i = 0; i < addrs.length; i += 100) {
+    const chunk = addrs.slice(i, i + 100);
+    const infos = await conn.getMultipleAccountsInfo(chunk, "confirmed");
+    infos.forEach((info, j) => {
+      if (!info || !info.owner.equals(PROGRAM_ID)) return;
+      const b = decodeBill(chunk[j], info.data);
+      if (b) out.push(b);
+    });
+  }
+  return out;
+}
+
 export async function fetchBill(conn: Connection, address: PublicKey): Promise<Bill | null> {
   const info = await conn.getAccountInfo(address, "confirmed");
   if (!info || !info.owner.equals(PROGRAM_ID)) return null;

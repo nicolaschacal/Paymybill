@@ -23,13 +23,15 @@ import {
   feeFor,
   fetchBill,
   fetchBills,
+  fetchBillsByAddress,
+  listBillRefs,
   fetchSolUsd,
   lamportsToSol,
   payBillIx,
   randomId,
   solToLamports,
 } from "./chain";
-import type { Bill, Receipt } from "./chain";
+import type { Bill, BillRef, Receipt } from "./chain";
 import { billLink, fmtSol, fmtUsd, friendlyError, parseAmount, short, timeAgo } from "./lib";
 
 const REPO_URL = "https://github.com/nicolaschacal/paymybill";
@@ -87,26 +89,68 @@ function useSolUsd(): number | null {
   return p;
 }
 
-function useBills(creator?: PublicKey) {
+const PAGE = 20;
+
+/** Feed of bills with one status: a cheap index first, then full bills 20 at a time. */
+function usePagedBills(status: 0 | 1, enabled: boolean) {
   const { connection } = useConnection();
-  const [bills, setBills] = useState<Bill[] | null>(null);
+  const [index, setIndex] = useState<BillRef[] | null>(null);
+  const [cursor, setCursor] = useState(0);
+  const [bills, setBills] = useState<Bill[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const key = creator?.toBase58() ?? "all";
+  const [loadingMore, setLoadingMore] = useState(false);
+  const started = useRef(false);
+
   const reload = useCallback(async () => {
     setError(null);
+    setIndex(null);
+    setBills([]);
+    setCursor(0);
     try {
-      setBills(await fetchBills(connection, { creator }));
+      const idx = await listBillRefs(connection, status);
+      setIndex(idx);
+      setBills(await fetchBillsByAddress(connection, idx.slice(0, PAGE).map((r) => r.address)));
+      setCursor(Math.min(PAGE, idx.length));
     } catch (e) {
       setError(friendlyError(e));
-      setBills((b) => b ?? []);
+      setIndex((i) => i ?? []);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connection, key]);
+  }, [connection, status]);
+
   useEffect(() => {
-    setBills(null);
-    reload();
-  }, [reload]);
-  return { bills, error, reload };
+    if (enabled && !started.current) {
+      started.current = true;
+      reload();
+    }
+  }, [enabled, reload]);
+
+  const loadMore = useCallback(async () => {
+    if (!index) return;
+    setLoadingMore(true);
+    try {
+      const next = await fetchBillsByAddress(
+        connection,
+        index.slice(cursor, cursor + PAGE).map((r) => r.address),
+      );
+      setBills((b) => [...b, ...next]);
+      setCursor((c) => Math.min(c + PAGE, index.length));
+    } catch (e) {
+      setError(friendlyError(e));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [connection, index, cursor]);
+
+  return {
+    bills,
+    total: index ? index.length : null,
+    loading: started.current && index === null,
+    hasMore: !!index && cursor < index.length,
+    loadingMore,
+    error,
+    reload,
+    loadMore,
+  };
 }
 
 /** Bills the wallet posted, plus receipts for bills it paid (two filtered queries). */
@@ -399,11 +443,10 @@ function Skeletons() {
 function Explore() {
   const { publicKey } = useWallet();
   const usd = useSolUsd();
-  const { bills, error, reload } = useBills();
   const [tab, setTab] = useState<"open" | "paid">("open");
-  const open = bills?.filter((b) => !b.paid) ?? [];
-  const paid = bills?.filter((b) => b.paid) ?? [];
-  const shown = tab === "open" ? open : paid;
+  const open = usePagedBills(0, true);
+  const paid = usePagedBills(1, tab === "paid"); // only fetched once the Paid tab is opened
+  const cur = tab === "open" ? open : paid;
 
   return (
     <>
@@ -426,20 +469,20 @@ function Explore() {
 
       <div className="tabs" role="tablist">
         <button className={tab === "open" ? "on" : ""} onClick={() => setTab("open")}>
-          Open {bills && <span>{open.length}</span>}
+          Open {open.total !== null && <span>{open.total}</span>}
         </button>
         <button className={tab === "paid" ? "on" : ""} onClick={() => setTab("paid")}>
-          Paid {bills && <span>{paid.length}</span>}
+          Paid {paid.total !== null && <span>{paid.total}</span>}
         </button>
-        <button className="refresh" onClick={reload} aria-label="Refresh">
+        <button className="refresh" onClick={cur.reload} aria-label="Refresh">
           ↻
         </button>
       </div>
 
-      {error && <div className="notice">Couldn’t load bills: {error}</div>}
-      {bills === null ? (
+      {cur.error && <div className="notice">Couldn’t load bills: {cur.error}</div>}
+      {cur.loading || cur.total === null ? (
         <Skeletons />
-      ) : shown.length === 0 ? (
+      ) : cur.bills.length === 0 ? (
         tab === "open" ? (
           <Empty title="No open bills right now">
             <a className="btn red" href="#/new">
@@ -450,11 +493,20 @@ function Explore() {
           <Empty title="Nothing paid yet" />
         )
       ) : (
-        <div className="list">
-          {shown.map((b) => (
-            <BillCard key={b.address.toBase58()} bill={b} usd={usd} mine={!!publicKey && b.creator.equals(publicKey)} />
-          ))}
-        </div>
+        <>
+          <div className="list">
+            {cur.bills.map((b) => (
+              <BillCard key={b.address.toBase58()} bill={b} usd={usd} mine={!!publicKey && b.creator.equals(publicKey)} />
+            ))}
+          </div>
+          {cur.hasMore && (
+            <div className="more">
+              <button className="btn" onClick={cur.loadMore} disabled={cur.loadingMore}>
+                {cur.loadingMore ? "Loading…" : "Show more"}
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       <section className="how" id="how">
