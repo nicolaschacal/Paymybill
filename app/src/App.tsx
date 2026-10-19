@@ -5,12 +5,17 @@ import { WalletReadyState } from "@solana/wallet-adapter-base";
 import { PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
 import {
   BILL_ACCOUNT_SIZE,
+  RECEIPT_ACCOUNT_SIZE,
   CLUSTER,
   NOTE_MAX,
   PROGRAM_ID,
   TITLE_MAX,
   byteLen,
   closeBillIx,
+  closeReceiptIx,
+  fetchReceipt,
+  fetchReceipts,
+  legacyReceipt,
   createBillIx,
   explorerAddr,
   explorerTx,
@@ -24,7 +29,7 @@ import {
   randomId,
   solToLamports,
 } from "./chain";
-import type { Bill } from "./chain";
+import type { Bill, Receipt } from "./chain";
 import { billLink, fmtSol, fmtUsd, friendlyError, parseAmount, short, timeAgo } from "./lib";
 
 const REPO_URL = "https://github.com/nicolaschacal/paymybill";
@@ -104,35 +109,37 @@ function useBills(creator?: PublicKey) {
   return { bills, error, reload };
 }
 
-/** Bills the wallet created plus bills it paid (two filtered queries, merged). */
+/** Bills the wallet posted, plus receipts for bills it paid (two filtered queries). */
 function useMyBills(user?: PublicKey) {
   const { connection } = useConnection();
-  const [bills, setBills] = useState<Bill[] | null>(null);
+  const [data, setData] = useState<{ made: Bill[]; receipts: Receipt[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const key = user?.toBase58() ?? "none";
   const reload = useCallback(async () => {
     if (!user) return;
     setError(null);
     try {
-      const [made, paid] = await Promise.all([
+      const [made, receipts, paid] = await Promise.all([
         fetchBills(connection, { creator: user }),
+        fetchReceipts(connection, user),
         fetchBills(connection, { payer: user }),
       ]);
-      const seen = new Map<string, Bill>();
-      for (const b of [...made, ...paid]) seen.set(b.address.toBase58(), b);
-      const when = (b: Bill) => (b.paid && b.payer?.equals(user) ? b.paidAt : b.createdAt);
-      setBills([...seen.values()].sort((x, y) => when(y) - when(x)));
+      // bills paid before receipts existed still show up, as read-only receipts
+      const have = new Set(receipts.map((r) => r.bill.toBase58()));
+      const legacy = paid.filter((b) => !have.has(b.address.toBase58())).map(legacyReceipt);
+      const all = [...receipts, ...legacy].sort((x, y) => y.paidAt - x.paidAt);
+      setData({ made, receipts: all });
     } catch (e) {
       setError(friendlyError(e));
-      setBills((b) => b ?? []);
+      setData((d) => d ?? { made: [], receipts: [] });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection, key]);
   useEffect(() => {
-    setBills(null);
+    setData(null);
     reload();
   }, [reload]);
-  return { bills, error, reload };
+  return { data, error, reload };
 }
 
 function useSender() {
@@ -169,6 +176,38 @@ const Logo = () => (
     <path d="M26 26h12M26 32h12" stroke="var(--red)" strokeWidth="3" strokeLinecap="round" />
   </svg>
 );
+
+/* ---------------------------------------------------------------- theme */
+
+function ThemeToggle() {
+  const [dark, setDark] = useState(() => document.documentElement.getAttribute("data-theme") === "dark");
+  const flip = () => {
+    const next = !dark;
+    setDark(next);
+    if (next) document.documentElement.setAttribute("data-theme", "dark");
+    else document.documentElement.removeAttribute("data-theme");
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", next ? "#262624" : "#f5ede0");
+    try {
+      localStorage.setItem("theme", next ? "dark" : "light");
+    } catch {
+      /* storage can be blocked; the toggle still works for this visit */
+    }
+  };
+  return (
+    <button className="theme" onClick={flip} aria-label={dark ? "Switch to light mode" : "Switch to dark mode"} title={dark ? "Light mode" : "Dark mode"}>
+      {dark ? (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+        </svg>
+      ) : (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+        </svg>
+      )}
+    </button>
+  );
+}
 
 /* ---------------------------------------------------------------- wallet */
 
@@ -263,17 +302,7 @@ function Amount({ lamports, usd, big }: { lamports: bigint; usd: number | null; 
   );
 }
 
-function BillCard({
-  bill,
-  usd,
-  mine,
-  paidByMe,
-}: {
-  bill: Bill;
-  usd: number | null;
-  mine: boolean;
-  paidByMe?: boolean;
-}) {
+function BillCard({ bill, usd, mine }: { bill: Bill; usd: number | null; mine: boolean }) {
   return (
     <a className={"card" + (bill.paid ? " paid" : "")} href={`#/b/${bill.address.toBase58()}`}>
       <div className="card-main">
@@ -282,7 +311,6 @@ function BillCard({
         <div className="card-meta">
           <span className="pill">{short(bill.creator)}</span>
           {mine && <span className="pill dark">yours</span>}
-          {paidByMe && <span className="pill dark">you paid</span>}
           <span>{timeAgo(bill.createdAt)}</span>
         </div>
       </div>
@@ -295,6 +323,29 @@ function BillCard({
         ) : (
           <span className="btn red sm">{mine ? "Share" : "Pay"}</span>
         )}
+      </div>
+    </a>
+  );
+}
+
+function ReceiptCard({ r, usd }: { r: Receipt; usd: number | null }) {
+  const href = r.legacy ? `#/b/${r.bill.toBase58()}` : `#/r/${r.address.toBase58()}`;
+  return (
+    <a className="card paid" href={href}>
+      <div className="card-main">
+        <div className="card-title">{r.title}</div>
+        {r.note && <div className="card-note">{r.note}</div>}
+        <div className="card-meta">
+          <span className="pill">{short(r.creator)}</span>
+          <span className="pill dark">you paid</span>
+          <span>{timeAgo(r.paidAt)}</span>
+        </div>
+      </div>
+      <div className="card-side">
+        <Amount lamports={r.lamports} usd={usd} />
+        <span className="badge">
+          <Check /> Receipt
+        </span>
       </div>
     </a>
   );
@@ -549,7 +600,7 @@ function NewBill() {
 function Mine() {
   const { publicKey } = useWallet();
   const usd = useSolUsd();
-  const { bills, error, reload } = useMyBills(publicKey ?? undefined);
+  const { data, error, reload } = useMyBills(publicKey ?? undefined);
   const send = useSender();
   const toast = useToast();
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -557,12 +608,13 @@ function Mine() {
 
   if (!publicKey) return <Empty title="Connect your wallet to see your bills" />;
 
-  async function close(b: Bill) {
-    const k = b.address.toBase58();
+  async function remove(address: PublicKey, kind: "bill" | "receipt") {
+    const k = address.toBase58();
     setBusy(k);
     try {
-      const sig = await send([closeBillIx(publicKey!, b.address)]);
-      toast("Bill closed. Deposit refunded.", explorerTx(sig));
+      const ix = kind === "bill" ? closeBillIx(publicKey!, address) : closeReceiptIx(publicKey!, address);
+      const sig = await send([ix]);
+      toast(kind === "bill" ? "Bill closed. Deposit refunded." : "Receipt removed. Deposit refunded.", explorerTx(sig));
       setConfirming(null);
       await reload();
     } catch (e) {
@@ -572,58 +624,41 @@ function Mine() {
     }
   }
 
-  function Section({ title, items }: { title: string; items: Bill[] }) {
+  function Actions({ k, address, kind, label, prompt, link }: { k: string; address: PublicKey; kind: "bill" | "receipt"; label: string; prompt: string; link?: string }) {
     return (
-      <>
-        <h3 className="sec-title">
-          {title} <span>{items.length}</span>
-        </h3>
-        {items.length === 0 ? (
-          <div className="sec-empty">Nothing here yet.</div>
-        ) : (
-          <div className="list">
-            {items.map((b) => {
-              const k = b.address.toBase58();
-              if (!b.creator.equals(publicKey!)) {
-                return <BillCard key={k} bill={b} usd={usd} mine={false} paidByMe />;
-              }
-              return (
-                <div key={k} className="mine-row">
-                  <BillCard bill={b} usd={usd} mine />
-                  <div className="mine-actions">
-                    <button
-                      className="link"
-                      onClick={() => {
-                        navigator.clipboard?.writeText(billLink(k));
-                        toast("Link copied");
-                      }}
-                    >
-                      Copy link
-                    </button>
-                    {confirming === k ? (
-                      <span className="confirm">
-                        {b.paid ? "Remove record and refund deposit?" : "Cancel this bill?"}
-                        <button className="link danger" disabled={busy === k} onClick={() => close(b)}>
-                          {busy === k ? "Closing…" : "Yes"}
-                        </button>
-                        <button className="link" onClick={() => setConfirming(null)}>
-                          No
-                        </button>
-                      </span>
-                    ) : (
-                      <button className="link danger" onClick={() => setConfirming(k)}>
-                        {b.paid ? "Remove" : "Cancel bill"}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+      <div className="mine-actions">
+        {link && (
+          <button
+            className="link"
+            onClick={() => {
+              navigator.clipboard?.writeText(link);
+              toast("Link copied");
+            }}
+          >
+            Copy link
+          </button>
         )}
-      </>
+        {confirming === k ? (
+          <span className="confirm">
+            {prompt}
+            <button className="link danger" disabled={busy === k} onClick={() => remove(address, kind)}>
+              {busy === k ? "Closing…" : "Yes"}
+            </button>
+            <button className="link" onClick={() => setConfirming(null)}>
+              No
+            </button>
+          </span>
+        ) : (
+          <button className="link danger" onClick={() => setConfirming(k)}>
+            {label}
+          </button>
+        )}
+      </div>
     );
   }
+
+  const made = data?.made ?? [];
+  const receipts = data?.receipts ?? [];
 
   return (
     <>
@@ -634,9 +669,9 @@ function Mine() {
         </a>
       </div>
       {error && <div className="notice">Couldn’t load bills: {error}</div>}
-      {bills === null ? (
+      {data === null ? (
         <Skeletons />
-      ) : bills.length === 0 ? (
+      ) : made.length === 0 && receipts.length === 0 ? (
         <Empty title="No bills yet">
           <a className="btn red" href="#/new">
             Post your first bill
@@ -644,14 +679,175 @@ function Mine() {
         </Empty>
       ) : (
         <>
-          <Section title="Bills I posted" items={bills.filter((b) => b.creator.equals(publicKey))} />
-          <Section
-            title="Bills I paid"
-            items={bills.filter((b) => b.payer?.equals(publicKey) && !b.creator.equals(publicKey))}
-          />
+          <h3 className="sec-title">
+            Bills I posted <span>{made.length}</span>
+          </h3>
+          {made.length === 0 ? (
+            <div className="sec-empty">Nothing here yet.</div>
+          ) : (
+            <div className="list">
+              {made.map((b) => {
+                const k = b.address.toBase58();
+                return (
+                  <div key={k} className="mine-row">
+                    <BillCard bill={b} usd={usd} mine />
+                    <Actions
+                      k={k}
+                      address={b.address}
+                      kind="bill"
+                      link={billLink(k)}
+                      label={b.paid ? "Remove" : "Cancel bill"}
+                      prompt={b.paid ? "Remove bill and refund deposit?" : "Cancel this bill?"}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <h3 className="sec-title">
+            Receipts for bills I paid <span>{receipts.length}</span>
+          </h3>
+          {receipts.length === 0 ? (
+            <div className="sec-empty">Nothing here yet.</div>
+          ) : (
+            <div className="list">
+              {receipts.map((r) => {
+                const k = r.address.toBase58();
+                return (
+                  <div key={k} className="mine-row">
+                    <ReceiptCard r={r} usd={usd} />
+                    {!r.legacy && (
+                      <Actions
+                        k={k}
+                        address={r.address}
+                        kind="receipt"
+                        label="Remove receipt"
+                        prompt="Remove receipt and refund deposit?"
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </>
       )}
     </>
+  );
+}
+
+function ReceiptPage({ addr }: { addr: string }) {
+  const { connection } = useConnection();
+  const { publicKey } = useWallet();
+  const send = useSender();
+  const toast = useToast();
+  const usd = useSolUsd();
+  const [r, setR] = useState<Receipt | null | undefined>(undefined);
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const pk = new PublicKey(addr);
+        const got = await fetchReceipt(connection, pk);
+        if (live) setR(got);
+      } catch {
+        if (live) setR(null);
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [connection, addr]);
+
+  if (r === undefined) return <div className="panel skel tall" />;
+  if (!r) {
+    return (
+      <Empty title="Receipt not found">
+        It may have been removed or the link is wrong.
+        <a className="btn" href="#/mine">
+          My bills
+        </a>
+      </Empty>
+    );
+  }
+  const mine = !!publicKey && r.payer.equals(publicKey);
+  const fee = feeFor(r.lamports);
+
+  async function remove() {
+    setBusy(true);
+    try {
+      const sig = await send([closeReceiptIx(publicKey!, r!.address)]);
+      toast("Receipt removed. Deposit refunded.", explorerTx(sig));
+      go("/mine");
+    } catch (e) {
+      toast(friendlyError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="panel detail">
+      <a className="back" href="#/mine">
+        ← My bills
+      </a>
+      <div className="detail-top">
+        <div>
+          <h2>{r.title}</h2>
+          <div className="card-meta">
+            <span>Paid to</span>
+            <a className="pill" href={explorerAddr(r.creator.toBase58())} target="_blank" rel="noreferrer" title={r.creator.toBase58()}>
+              {short(r.creator, 5)}
+            </a>
+            <span>{timeAgo(r.paidAt)}</span>
+          </div>
+        </div>
+        <Amount lamports={r.lamports} usd={usd} big />
+      </div>
+      {r.note && <p className="note">{r.note}</p>}
+      <div className="receipt">
+        <div className="badge big">
+          <Check /> Receipt
+        </div>
+        <div className="breakdown">
+          <div>
+            <span>To the creator</span>
+            <span>{fmtSol(r.lamports - fee, 6)} SOL</span>
+          </div>
+          <div>
+            <span>Service fee (3%)</span>
+            <span>{fmtSol(fee, 6)} SOL</span>
+          </div>
+          <div>
+            <span>Paid by</span>
+            <a href={explorerAddr(r.payer.toBase58())} target="_blank" rel="noreferrer">
+              {short(r.payer, 5)}
+            </a>
+          </div>
+        </div>
+        <div className="fine">
+          This receipt is your own copy, stored on Solana. It stays even if the creator closes the bill.
+        </div>
+        {mine &&
+          (confirm ? (
+            <div className="row">
+              <button className="btn ghost" onClick={() => setConfirm(false)} disabled={busy}>
+                Keep it
+              </button>
+              <button className="btn red grow" onClick={remove} disabled={busy}>
+                {busy ? "Confirm in your wallet…" : "Remove and refund deposit"}
+              </button>
+            </div>
+          ) : (
+            <button className="link danger" onClick={() => setConfirm(true)}>
+              Remove receipt
+            </button>
+          ))}
+      </div>
+    </div>
   );
 }
 
@@ -675,6 +871,7 @@ function BillPage({ addr }: { addr: string }) {
   const [step, setStep] = useState<"view" | "confirm">("view");
   const [busy, setBusy] = useState(false);
   const [txSig, setTxSig] = useState<string | null>(null);
+  const [rcRent, setRcRent] = useState<bigint>(3_000_000n);
 
   const load = useCallback(async () => {
     if (!pk) return setBill(null);
@@ -689,6 +886,13 @@ function BillPage({ addr }: { addr: string }) {
     setBill(undefined);
     load();
   }, [load]);
+
+  useEffect(() => {
+    connection
+      .getMinimumBalanceForRentExemption(RECEIPT_ACCOUNT_SIZE)
+      .then((l) => setRcRent(BigInt(l)))
+      .catch(() => {});
+  }, [connection]);
 
   useEffect(() => {
     if (!publicKey) return setBalance(null);
@@ -714,7 +918,7 @@ function BillPage({ addr }: { addr: string }) {
   const short_ = short(bill.creator, 5);
   const fee = feeFor(bill.lamports);
   const toCreator = bill.lamports - fee;
-  const enough = balance === null || balance >= bill.lamports + 10_000n;
+  const enough = balance === null || balance >= bill.lamports + rcRent + 10_000n;
 
   async function pay() {
     if (!publicKey || !bill) return;
@@ -832,10 +1036,11 @@ function BillPage({ addr }: { addr: string }) {
               <span>{fmtSol(fee, 6)} SOL</span>
             </div>
           </div>
-          {!enough && <div className="notice warn">Your wallet doesn’t have enough SOL ({fmtSol(balance ?? 0n)} available).</div>}
+          {!enough && <div className="notice warn">Your wallet doesn’t have enough SOL ({fmtSol(balance ?? 0n)} available, the receipt deposit needs ≈ {fmtSol(rcRent, 4)} more).</div>}
           <div className="fine">
-            Your wallet pays exactly this amount. 97% goes straight to the creator and 3% to paymybill.fun.
-            Payments are final. Network fee ≈ 0.00001 SOL.
+            The bill costs exactly this amount: 97% goes straight to the creator and 3% to paymybill.fun.
+            You also get a receipt stored on Solana, with a refundable deposit of ≈ {fmtSol(rcRent, 4)} SOL
+            you get back when you remove it. Payments are final.
           </div>
           <div className="row">
             <button className="btn ghost" onClick={() => setStep("view")} disabled={busy}>
@@ -864,7 +1069,7 @@ export function App() {
   }, []);
 
   const page =
-    route[0] === "new" ? <NewBill /> : route[0] === "mine" ? <Mine /> : route[0] === "b" && route[1] ? <BillPage addr={route[1]} key={route[1]} /> : <Explore />;
+    route[0] === "new" ? <NewBill /> : route[0] === "mine" ? <Mine /> : route[0] === "b" && route[1] ? <BillPage addr={route[1]} key={route[1]} /> : route[0] === "r" && route[1] ? <ReceiptPage addr={route[1]} key={route[1]} /> : <Explore />;
 
   return (
     <ToastCtx.Provider value={notify}>
@@ -884,6 +1089,7 @@ export function App() {
               My bills
             </a>
           </nav>
+          <ThemeToggle />
           <WalletChip />
         </div>
       </header>

@@ -6,6 +6,9 @@
 //!     no counters, no user profiles, no escrow, no token accounts.
 //!   * Non-custodial: funds go straight from the payer to the creator's
 //!     wallet inside the same transaction that marks the bill as paid.
+//!   * Receipt: paying also creates a receipt PDA owned by the payer (a copy of
+//!     the bill, seeds ["receipt", bill]). Creator keeps the bill, payer keeps the
+//!     receipt, and each can close their own copy independently.
 //!   * Service fee: FEE_BPS (3%) of the bill amount is taken out of what the
 //!     creator receives and sent to FEE_WALLET in that same transaction. The
 //!     payer always pays exactly the bill amount.
@@ -100,10 +103,27 @@ pub mod paymybill {
             )?;
         }
 
+        let now = Clock::get()?.unix_timestamp;
         let bill = &mut ctx.accounts.bill;
         bill.status = STATUS_PAID;
         bill.payer = ctx.accounts.payer.key();
-        bill.paid_at = Clock::get()?.unix_timestamp;
+        bill.paid_at = now;
+
+        // The payer's own copy of the bill: survives if the creator closes theirs.
+        let receipt = &mut ctx.accounts.receipt;
+        receipt.bump = ctx.bumps.receipt;
+        receipt.payer = ctx.accounts.payer.key();
+        receipt.creator = bill.creator;
+        receipt.bill = bill.key();
+        receipt.amount = bill.amount;
+        receipt.paid_at = now;
+        receipt.title = bill.title.clone();
+        receipt.note = bill.note.clone();
+        Ok(())
+    }
+
+    /// Payer-only. Removes the receipt and refunds its deposit to the payer.
+    pub fn close_receipt(_ctx: Context<CloseReceipt>) -> Result<()> {
         Ok(())
     }
 
@@ -148,7 +168,24 @@ pub struct PayBill<'info> {
     /// CHECK: must be the hard-coded FEE_WALLET; it only receives SOL.
     #[account(mut, address = FEE_WALLET @ BillError::WrongFeeWallet)]
     pub fee_wallet: UncheckedAccount<'info>,
+    /// The payer's receipt. The deposit (rent) is paid by the payer and is refunded on close.
+    #[account(
+        init,
+        payer = payer,
+        space = 8 + Receipt::INIT_SPACE,
+        seeds = [b"receipt", bill.key().as_ref()],
+        bump
+    )]
+    pub receipt: Account<'info, Receipt>,
     pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct CloseReceipt<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(mut, close = payer, has_one = payer)]
+    pub receipt: Account<'info, Receipt>,
 }
 
 #[derive(Accounts)]
@@ -174,6 +211,23 @@ pub struct Bill {
     pub created_at: i64,
     pub paid_at: i64,
     pub payer: Pubkey,
+    #[max_len(TITLE_MAX)]
+    pub title: String,
+    #[max_len(NOTE_MAX)]
+    pub note: String,
+}
+
+/// The payer's copy of a paid bill. Offsets are read by the client:
+/// bump 8, payer 9, creator 41, bill 73, amount 105, paid_at 113, title 121.
+#[account]
+#[derive(InitSpace)]
+pub struct Receipt {
+    pub bump: u8,
+    pub payer: Pubkey,
+    pub creator: Pubkey,
+    pub bill: Pubkey,
+    pub amount: u64,
+    pub paid_at: i64,
     #[max_len(TITLE_MAX)]
     pub title: String,
     #[max_len(NOTE_MAX)]
@@ -219,6 +273,39 @@ mod tests {
             &[0xed, 0x6c, 0x97, 0x43, 0xf9, 0x53, 0xf7, 0xfa][..]
         );
         assert_eq!(8 + Bill::INIT_SPACE, 322);
+        assert_eq!(Receipt::DISCRIMINATOR, &[0x27, 0x9a, 0x49, 0x6a, 0x50, 0x66, 0x91, 0x99][..]);
+        assert_eq!(
+            crate::instruction::CloseReceipt::DISCRIMINATOR,
+            &[0x7e, 0xfe, 0xf4, 0xcb, 0x7c, 0xa4, 0x86, 0x59][..]
+        );
+        assert_eq!(8 + Receipt::INIT_SPACE, 337);
+    }
+
+    #[test]
+    fn receipt_layout_matches_client() {
+        let (payer, creator, bill) = (Pubkey::new_unique(), Pubkey::new_unique(), Pubkey::new_unique());
+        let r = Receipt {
+            bump: 253,
+            payer,
+            creator,
+            bill,
+            amount: 5,
+            paid_at: 99,
+            title: "Rent".to_string(),
+            note: "May".to_string(),
+        };
+        let mut d = Vec::new();
+        r.try_serialize(&mut d).unwrap();
+        assert_eq!(d[8], 253);
+        assert_eq!(&d[9..41], payer.as_ref());
+        assert_eq!(&d[41..73], creator.as_ref());
+        assert_eq!(&d[73..105], bill.as_ref());
+        assert_eq!(u64::from_le_bytes(d[105..113].try_into().unwrap()), 5);
+        assert_eq!(i64::from_le_bytes(d[113..121].try_into().unwrap()), 99);
+        assert_eq!(u32::from_le_bytes(d[121..125].try_into().unwrap()), 4);
+        assert_eq!(&d[125..129], b"Rent");
+        assert_eq!(u32::from_le_bytes(d[129..133].try_into().unwrap()), 3);
+        assert_eq!(&d[133..136], b"May");
     }
 
     #[test]

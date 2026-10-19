@@ -3,15 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f5ede0" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#17120f" media="(prefers-color-scheme: dark)" />
-    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5ede0" />
+    
     <meta name="description" content="Post a bill. A stranger pays it. Wallet to wallet on Solana, no servers." />
     <title>paymybill.fun</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23e4472f'/%3E%3Cpath d='M20 18h24v30l-6-4-6 4-6-4-6 4z' fill='%23fff9ee'/%3E%3C/svg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;700;800;900&display=swap" rel="stylesheet" />
+      <script>
+      try {
+        if (localStorage.getItem("theme") === "dark") {
+          document.documentElement.setAttribute("data-theme", "dark");
+          document.querySelector('meta[name="theme-color"]').setAttribute("content", "#262624");
+        }
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

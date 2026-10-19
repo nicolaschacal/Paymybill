@@ -6,7 +6,7 @@ Create a profile-less bill ("Electricity, October — 0.06 SOL"), share the link
 
 ## How it stays onchain
 
-- **One PDA per bill, nothing else.** No global registry, no counter, no user profile, no escrow, no token accounts. The bill id is a random `u64` picked by the client, so no counter account is needed.
+- **One PDA per bill, plus one receipt PDA per payment.** No global registry, no counter, no user profile, no escrow, no token accounts. The bill id is a random `u64` picked by the client, so no counter account is needed.
 - **Seeds:** `["bill", creator, id_le_bytes]`. Fixed size: 322 bytes (≈0.003 SOL rent, refunded when the creator closes the bill).
 - **Non-custodial:** `pay_bill` does a System Program transfer payer → creator and stamps the bill in the same transaction. The program never holds funds.
 - **No backend:** the app is a static site. Bills are listed with `getProgramAccounts` (filtered by size, discriminator and creator) straight from an RPC.
@@ -16,7 +16,8 @@ Create a profile-less bill ("Electricity, October — 0.06 SOL"), share the link
 | Instruction | Who | What |
 | --- | --- | --- |
 | `create_bill(id, amount, title, note)` | creator | Creates the bill PDA (title ≤ 48 bytes, note ≤ 160 bytes). |
-| `pay_bill()` | anyone but the creator | Takes `amount` from the payer: 97% to the creator, 3% of it to the fee wallet instead (the payer pays exactly the bill amount), and marks the bill paid. |
+| `pay_bill()` | anyone but the creator | Takes `amount` from the payer: 97% to the creator, 3% of it to the fee wallet instead (the payer pays exactly the bill amount), marks the bill paid and creates the payer's receipt PDA (seeds `["receipt", bill]`, refundable deposit paid by the payer). |
+| `close_receipt()` | payer | Closes the receipt and refunds its deposit. The receipt survives if the creator closes the bill. |
 | `close_bill()` | creator | Closes an open or paid bill and refunds the rent. |
 
 Amounts are in SOL. The UI can take USD and converts at the current rate when posting (rate from Coinbase's public API; only a convenience, the bill is priced in SOL).
