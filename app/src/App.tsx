@@ -23,6 +23,7 @@ import {
   feeFor,
   fetchBill,
   fetchBills,
+  fetchBillsById,
   fetchBillsByAddress,
   listBillRefs,
   fetchSolUsd,
@@ -32,7 +33,7 @@ import {
   solToLamports,
 } from "./chain";
 import type { Bill, BillRef, Receipt } from "./chain";
-import { billLink, fmtSol, fmtUsd, friendlyError, parseAmount, short, timeAgo } from "./lib";
+import { billLink, billPath, fmtSol, fmtUsd, friendlyError, parseAmount, parseBillParam, short, timeAgo } from "./lib";
 
 const REPO_URL = "https://github.com/nicolaschacal/paymybill";
 
@@ -61,21 +62,29 @@ function ToastHost({ toast }: { toast: { msg: string; href?: string } | null }) 
 /* ---------------------------------------------------------------- hooks */
 
 function useRoute(): string[] {
-  const read = () => location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  const read = () => location.pathname.split("/").filter(Boolean);
   const [r, setR] = useState(read);
   useEffect(() => {
     const on = () => {
       setR(read());
       window.scrollTo({ top: 0 });
     };
-    window.addEventListener("hashchange", on);
-    return () => window.removeEventListener("hashchange", on);
+    window.addEventListener("popstate", on);
+    window.addEventListener("pmb:nav", on);
+    return () => {
+      window.removeEventListener("popstate", on);
+      window.removeEventListener("pmb:nav", on);
+    };
   }, []);
   return r;
 }
 const go = (path: string) => {
-  location.hash = path;
+  history.pushState(null, "", path);
+  window.dispatchEvent(new Event("pmb:nav"));
 };
+
+// Old links looked like /#/b/<address>: turn them into /b/<address> before the first render.
+if (location.hash.startsWith("#/")) history.replaceState(null, "", location.hash.slice(1));
 
 function useSolUsd(): number | null {
   const [p, setP] = useState<number | null>(null);
@@ -315,7 +324,7 @@ function WalletChip() {
               >
                 Copy address
               </button>
-              <a className="menu-item" href={`#/mine`} onClick={() => setOpen(false)}>
+              <a className="menu-item" href="/mine" onClick={() => setOpen(false)}>
                 My bills
               </a>
               <button
@@ -370,9 +379,9 @@ function Amount({ lamports, usd, big }: { lamports: bigint; usd: number | null; 
   );
 }
 
-function BillCard({ bill, usd, mine }: { bill: Bill; usd: number | null; mine: boolean }) {
+function BillCard({ bill, usd, mine, byAddress }: { bill: Bill; usd: number | null; mine: boolean; byAddress?: boolean }) {
   return (
-    <a className={"card" + (bill.paid ? " paid" : "")} href={`#/b/${bill.address.toBase58()}`}>
+    <a className={"card" + (bill.paid ? " paid" : "")} href={byAddress ? `/b/${bill.address.toBase58()}` : billPath(bill)}>
       <div className="card-main">
         <div className="card-title">{bill.title}</div>
         {bill.note && <div className="card-note">{bill.note}</div>}
@@ -397,7 +406,7 @@ function BillCard({ bill, usd, mine }: { bill: Bill; usd: number | null; mine: b
 }
 
 function ReceiptCard({ r, usd }: { r: Receipt; usd: number | null }) {
-  const href = r.legacy ? `#/b/${r.bill.toBase58()}` : `#/r/${r.address.toBase58()}`;
+  const href = r.legacy ? `/b/${r.bill.toBase58()}` : `/r/${r.address.toBase58()}`;
   return (
     <a className="card paid" href={href}>
       <div className="card-main">
@@ -458,7 +467,7 @@ function Explore() {
         </h1>
         <p>Wallet to wallet on Solana. No servers, no middlemen, no custody.</p>
         <div className="hero-actions">
-          <a className="btn red lg" href="#/new">
+          <a className="btn red lg" href="/new">
             Post a bill
           </a>
           <a className="btn ghost lg" href="#how">
@@ -485,7 +494,7 @@ function Explore() {
       ) : cur.bills.length === 0 ? (
         tab === "open" ? (
           <Empty title="No open bills right now">
-            <a className="btn red" href="#/new">
+            <a className="btn red" href="/new">
               Be the first to post one
             </a>
           </Empty>
@@ -570,10 +579,11 @@ function NewBill() {
     if (!publicKey || !valid) return;
     setBusy(true);
     try {
-      const { ix, bill } = createBillIx(publicKey, randomId(), posted, title.trim(), note.trim());
+      const id = randomId();
+      const { ix } = createBillIx(publicKey, id, posted, title.trim(), note.trim());
       const sig = await send([ix]);
       toast("Bill posted. Share the link!", explorerTx(sig));
-      go(`/b/${bill.toBase58()}`);
+      go(billPath({ title: title.trim(), id }));
     } catch (e) {
       toast(friendlyError(e));
     } finally {
@@ -740,7 +750,7 @@ function Mine() {
     <>
       <div className="page-head">
         <h2>My bills</h2>
-        <a className="btn red sm" href="#/new">
+        <a className="btn red sm" href="/new">
           New bill
         </a>
       </div>
@@ -749,7 +759,7 @@ function Mine() {
         <Skeletons />
       ) : made.length === 0 && receipts.length === 0 ? (
         <Empty title="No bills yet">
-          <a className="btn red" href="#/new">
+          <a className="btn red" href="/new">
             Post your first bill
           </a>
         </Empty>
@@ -771,7 +781,7 @@ function Mine() {
                       k={k}
                       address={b.address}
                       kind="bill"
-                      link={billLink(k)}
+                      link={billLink(b)}
                       label={b.paid ? "Remove" : "Cancel bill"}
                       prompt={b.paid ? "Remove bill and refund deposit?" : "Cancel this bill?"}
                     />
@@ -843,7 +853,7 @@ function ReceiptPage({ addr }: { addr: string }) {
     return (
       <Empty title="Receipt not found">
         It may have been removed or the link is wrong.
-        <a className="btn" href="#/mine">
+        <a className="btn" href="/mine">
           My bills
         </a>
       </Empty>
@@ -867,7 +877,7 @@ function ReceiptPage({ addr }: { addr: string }) {
 
   return (
     <div className="panel detail">
-      <a className="back" href="#/mine">
+      <a className="back" href="/mine">
         ← My bills
       </a>
       <div className="detail-top">
@@ -983,7 +993,7 @@ function BillPage({ addr }: { addr: string }) {
     return (
       <Empty title="Bill not found">
         It may have been cancelled or the link is wrong.
-        <a className="btn" href="#/">
+        <a className="btn" href="/">
           Back to bills
         </a>
       </Empty>
@@ -1015,7 +1025,7 @@ function BillPage({ addr }: { addr: string }) {
 
   return (
     <div className="panel detail">
-      <a className="back" href="#/">
+      <a className="back" href="/">
         ← All bills
       </a>
       <div className="detail-top">
@@ -1065,11 +1075,11 @@ function BillPage({ addr }: { addr: string }) {
         <div className="pay-box">
           <div className="fine">This is your bill. Share it so someone can pay it.</div>
           <div className="share">
-            <input readOnly value={billLink(bill.address.toBase58())} onFocus={(e) => e.currentTarget.select()} />
+            <input readOnly value={billLink(bill)} onFocus={(e) => e.currentTarget.select()} />
             <button
               className="btn red"
               onClick={() => {
-                navigator.clipboard?.writeText(billLink(bill.address.toBase58()));
+                navigator.clipboard?.writeText(billLink(bill));
                 toast("Link copied");
               }}
             >
@@ -1132,10 +1142,68 @@ function BillPage({ addr }: { addr: string }) {
   );
 }
 
+function BillRoute({ param }: { param: string }) {
+  const { connection } = useConnection();
+  const parsed = useMemo(() => parseBillParam(param), [param]);
+  const [matches, setMatches] = useState<Bill[] | null | undefined>(undefined);
+  const usd = useSolUsd();
+
+  useEffect(() => {
+    if (!parsed || parsed.kind !== "id") return;
+    let live = true;
+    setMatches(undefined);
+    fetchBillsById(connection, parsed.id)
+      .then((m) => live && setMatches(m))
+      .catch(() => live && setMatches(null));
+    return () => {
+      live = false;
+    };
+  }, [connection, parsed]);
+
+  const notFound = (
+    <Empty title="Bill not found">
+      It may have been cancelled or the link is wrong.
+      <a className="btn" href="/">
+        Back to bills
+      </a>
+    </Empty>
+  );
+  if (!parsed) return notFound;
+  if (parsed.kind === "address") return <BillPage addr={parsed.address} key={parsed.address} />;
+  if (matches === undefined) return <div className="panel skel tall" />;
+  if (!matches || matches.length === 0) return notFound;
+  if (matches.length === 1) return <BillPage addr={matches[0].address.toBase58()} key={matches[0].address.toBase58()} />;
+  return (
+    <>
+      <div className="notice warn">
+        More than one bill uses this link. Check who posted each one (the address) before paying.
+      </div>
+      <div className="list">
+        {matches.map((b) => (
+          <BillCard key={b.address.toBase58()} bill={b} usd={usd} mine={false} byAddress />
+        ))}
+      </div>
+    </>
+  );
+}
+
 /* ---------------------------------------------------------------- shell */
 
 export function App() {
   const route = useRoute();
+  useEffect(() => {
+    // in-app links navigate without a page reload (the wallet stays connected)
+    const onClick = (e: MouseEvent) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const a = (e.target as Element).closest?.("a");
+      const href = a?.getAttribute("href");
+      if (!a || !href || !href.startsWith("/") || a.target === "_blank") return;
+      e.preventDefault();
+      go(href);
+    };
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, []);
   const [toast, setToast] = useState<{ msg: string; href?: string } | null>(null);
   const timer = useRef<number>();
   const notify = useCallback((msg: string, href?: string) => {
@@ -1145,23 +1213,23 @@ export function App() {
   }, []);
 
   const page =
-    route[0] === "new" ? <NewBill /> : route[0] === "mine" ? <Mine /> : route[0] === "b" && route[1] ? <BillPage addr={route[1]} key={route[1]} /> : route[0] === "r" && route[1] ? <ReceiptPage addr={route[1]} key={route[1]} /> : <Explore />;
+    route[0] === "new" ? <NewBill /> : route[0] === "mine" ? <Mine /> : route[0] === "b" && route[1] ? <BillRoute param={route[1]} key={route[1]} /> : route[0] === "r" && route[1] ? <ReceiptPage addr={route[1]} key={route[1]} /> : <Explore />;
 
   return (
     <ToastCtx.Provider value={notify}>
       <header className="top">
         <div className="wrap top-in">
-          <a className="brand" href="#/">
+          <a className="brand" href="/">
             <Logo />
             <span>
               paymybill<span className="red">.fun</span>
             </span>
           </a>
           <nav className="nav">
-            <a href="#/" className={!route[0] ? "on" : ""}>
+            <a href="/" className={!route[0] ? "on" : ""}>
               Explore
             </a>
-            <a href="#/mine" className={route[0] === "mine" ? "on" : ""}>
+            <a href="/mine" className={route[0] === "mine" ? "on" : ""}>
               My bills
             </a>
           </nav>

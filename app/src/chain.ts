@@ -237,6 +237,26 @@ export async function listBillRefs(conn: Connection, status: 0 | 1): Promise<Bil
   return refs.sort((x, y) => y.at - x.at);
 }
 
+/** Bills with this random id (normally exactly one; more only if someone copied an id). */
+export async function fetchBillsById(conn: Connection, id: bigint): Promise<Bill[]> {
+  const b = new Uint8Array(8);
+  new DataView(b.buffer).setBigUint64(0, id, true);
+  const accts = await conn.getProgramAccounts(PROGRAM_ID, {
+    filters: [
+      { dataSize: BILL_ACCOUNT_SIZE },
+      { memcmp: { offset: 0, bytes: bs58.encode(BILL_DISC) } },
+      { memcmp: { offset: 42, bytes: bs58.encode(b) } },
+    ],
+    commitment: "confirmed",
+  });
+  const out: Bill[] = [];
+  for (const a of accts) {
+    const bill = decodeBill(a.pubkey, a.account.data);
+    if (bill) out.push(bill);
+  }
+  return out.sort((x, y) => x.createdAt - y.createdAt);
+}
+
 /** Full bills for a handful of addresses (closed ones are skipped). */
 export async function fetchBillsByAddress(conn: Connection, addrs: PublicKey[]): Promise<Bill[]> {
   const out: Bill[] = [];

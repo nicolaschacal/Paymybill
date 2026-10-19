@@ -50,7 +50,11 @@ npm install
 npm run dev
 ```
 
-Deploy `app/` as a static site (for example Vercel with root directory `app`). Routing uses `#/…`, so no rewrite rules are needed.
+Deploy `app/` as a static site (for example Vercel with root directory `app`). Routing uses real paths (`/b/…`, `/mine`), so the host must serve `index.html` for unknown paths; `app/vercel.json` does that on Vercel.
+
+Share links look like `/b/my-dog-vet-4xKp2mQ9vRt`: a cosmetic slug of the title plus the bill's random id in base58, resolved with one filtered `getProgramAccounts`. `/b/<address>` and the old `/#/b/<address>` links keep working. If two bills ever share an id (someone copying it), the page lists both with their poster addresses instead of picking one.
+
+Link previews (X, Telegram, …) use the tags in `app/index.html` and `app/public/og.png`. They need an absolute site URL: set `VITE_SITE_URL` (for example `https://paymybill.fun`) in the build environment.
 
 Set `VITE_RPC_URL` to your own RPC for real use: public endpoints rate-limit `getProgramAccounts`.
 

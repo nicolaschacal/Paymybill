@@ -1,4 +1,5 @@
-import { LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
+import bs58 from "bs58";
 
 export const short = (a: { toBase58(): string } | string, n = 4) => {
   const s = typeof a === "string" ? a : a.toBase58();
@@ -38,8 +39,60 @@ export function parseAmount(s: string): number {
   return Number.isFinite(n) ? n : NaN;
 }
 
-export const billLink = (addr: string) =>
-  `${location.origin}${location.pathname}#/b/${addr}`;
+/* ---------- friendly bill links ----------
+ * /b/my-dog-vet-4xKp2mQ9vRt : a readable slug of the title + the bill's random u64 id
+ * in base58 (≤ 11 chars). /b/<44-char address> keeps working too. The slug is cosmetic. */
+
+export function idToCode(id: bigint): string {
+  const b = new Uint8Array(8);
+  new DataView(b.buffer).setBigUint64(0, id, true);
+  return bs58.encode(b);
+}
+
+export function idBytes(id: bigint): Uint8Array {
+  const b = new Uint8Array(8);
+  new DataView(b.buffer).setBigUint64(0, id, true);
+  return b;
+}
+
+const slugify = (t: string) =>
+  t
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32)
+    .replace(/-+$/, "");
+
+export function billPath(b: { title: string; id: bigint }): string {
+  const slug = slugify(b.title);
+  return `/b/${slug ? slug + "-" : ""}${idToCode(b.id)}`;
+}
+
+export const billLink = (b: { title: string; id: bigint }) => location.origin + billPath(b);
+
+export type BillParam = { kind: "address"; address: string } | { kind: "id"; id: bigint };
+
+export function parseBillParam(param: string): BillParam | null {
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(param)) {
+    try {
+      const pk = new PublicKey(param);
+      return { kind: "address", address: pk.toBase58() };
+    } catch {
+      /* not an address, fall through */
+    }
+  }
+  const code = param.slice(param.lastIndexOf("-") + 1);
+  if (!/^[1-9A-HJ-NP-Za-km-z]{1,11}$/.test(code)) return null;
+  try {
+    const bytes = bs58.decode(code);
+    if (bytes.length !== 8) return null;
+    return { kind: "id", id: new DataView(bytes.buffer, bytes.byteOffset, 8).getBigUint64(0, true) };
+  } catch {
+    return null;
+  }
+}
 
 export function friendlyError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
