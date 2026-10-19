@@ -173,21 +173,44 @@ const Logo = () => (
   <svg width="30" height="30" viewBox="0 0 64 64" aria-hidden>
     <rect width="64" height="64" rx="17" fill="var(--red)" />
     <path d="M20 17h24v31l-6-4.2-6 4.2-6-4.2-6 4.2z" fill="var(--panel)" />
-    <path d="M27 22.5v6M37 22.5v6" stroke="var(--red)" strokeWidth="3.6" strokeLinecap="round" />
-    <path d="M26 35h12" stroke="var(--red)" strokeWidth="3" strokeLinecap="round" />
+    <path d="M26 26h3M35 26h3M26 32h12" stroke="var(--red)" strokeWidth="3" strokeLinecap="round" />
   </svg>
 );
 
 /* ---------------------------------------------------------------- theme */
 
+function applyTheme(dark: boolean) {
+  if (dark) document.documentElement.setAttribute("data-theme", "dark");
+  else document.documentElement.removeAttribute("data-theme");
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#262624" : "#f5ede0");
+}
+
+function storedTheme(): "dark" | "light" | null {
+  try {
+    const t = localStorage.getItem("theme");
+    return t === "dark" || t === "light" ? t : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Follows the system theme until the person picks one with the toggle. */
 function ThemeToggle() {
   const [dark, setDark] = useState(() => document.documentElement.getAttribute("data-theme") === "dark");
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const on = () => {
+      if (storedTheme()) return;
+      applyTheme(mq.matches);
+      setDark(mq.matches);
+    };
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
   const flip = () => {
     const next = !dark;
     setDark(next);
-    if (next) document.documentElement.setAttribute("data-theme", "dark");
-    else document.documentElement.removeAttribute("data-theme");
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", next ? "#262624" : "#f5ede0");
+    applyTheme(next);
     try {
       localStorage.setItem("theme", next ? "dark" : "light");
     } catch {
