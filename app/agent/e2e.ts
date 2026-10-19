@@ -99,6 +99,10 @@ async function main() {
     await expectFail("creator cannot pay own bill", sendIxs(conn, creator, [payBillIx(creator.publicKey, bill, lam(0.005))]));
     await expectFail("below minimum is rejected", sendIxs(conn, b1, [payBillIx(b1.publicKey, bill, 100_000n)]));
     await expectFail("more than remaining is rejected", sendIxs(conn, b1, [payBillIx(b1.publicKey, bill, lam(0.03))]));
+    await expectFail(
+      "hidden/direction-override characters in a title are rejected",
+      sendIxs(conn, creator, [createBillIx(creator.publicKey, randomId(), target, "pay\u202Ethis", "x").ix]),
+    );
     await expectFail("bad handle is rejected", sendIxs(conn, b1, [payBillIx(b1.publicKey, bill, lam(0.005), "x", "not valid!")]));
 
     // B pays 0.005 (partial)

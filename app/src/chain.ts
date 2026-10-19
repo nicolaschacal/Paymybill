@@ -120,7 +120,12 @@ const enc = new TextEncoder();
 const dec = new TextDecoder();
 export const byteLen = (s: string) => enc.encode(s).length;
 
-export const solToLamports = (sol: number) => BigInt(Math.round(sol * LAMPORTS_PER_SOL));
+/** Exact conversion (no float multiplication). Throws on anything that is not a sane amount. */
+export function solToLamports(sol: number): bigint {
+  if (!Number.isFinite(sol) || sol < 0 || sol > 1e10) throw new Error("Invalid SOL amount");
+  const [whole, frac = ""] = sol.toFixed(9).split(".");
+  return BigInt(whole) * 1_000_000_000n + BigInt(frac);
+}
 export const lamportsToSol = (l: bigint) => Number(l) / LAMPORTS_PER_SOL;
 
 export const utcDay = (unixSeconds = Math.floor(Date.now() / 1000)) => Math.floor(unixSeconds / 86_400);
@@ -156,10 +161,22 @@ export function randomId(): bigint {
 
 /* ---------- decode ---------- */
 
+/**
+ * Same character set the program refuses (see `is_unsafe_char` in lib.rs): control characters, zero-width
+ * and invisible characters, direction overrides and the invisible "tag" characters. The program blocks them
+ * on write; this also strips them on read, so data written before that rule (or by a custom client) can
+ * never spoof text on the page or hide instructions inside what an AI agent reads.
+ */
+export const UNSAFE_CHARS =
+  /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u115f\u1160\u17b4\u17b5\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufeff\uffa0\ufff9-\ufffb]|\udb40[\udc00-\udc7f]/g;
+export function cleanText(s: string): string {
+  return s.replace(UNSAFE_CHARS, "");
+}
+
 function readStr(data: Uint8Array, v: DataView, o: number): [string, number] {
   const len = v.getUint32(o, true);
   o += 4;
-  return [dec.decode(data.subarray(o, o + len)), o + len];
+  return [cleanText(dec.decode(data.subarray(o, o + len))), o + len];
 }
 
 const hasDisc = (data: Uint8Array, disc: Uint8Array) => {

@@ -1,0 +1,22 @@
+[package]
+name = "security-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Adversarial tests for the paymybill program, run in-process with LiteSVM against
+# the compiled .so (not the Rust functions), so they exercise the real account and
+# signer validation. Not part of the on-chain workspace.
+[workspace]
+
+[dev-dependencies]
+litesvm = "0.16"
+solana-address = "*"
+solana-keypair = "*"
+solana-signer = "*"
+solana-instruction = "*"
+solana-message = "*"
+solana-transaction = "*"
+solana-system-interface = { version = "*", features = ["bincode"] }
+solana-account = "*"
+solana-clock = "~3.1.1"

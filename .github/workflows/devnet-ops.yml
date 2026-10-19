@@ -15,6 +15,7 @@ on:
           - build
           - deploy
           - e2e
+          - security
 
 permissions:
   contents: write
@@ -139,6 +140,17 @@ jobs:
           npm ci
           npm run check:agent
           E2E_FUNDER="$GITHUB_WORKSPACE/artifacts/private/admin-keypair.json" npm run e2e
+
+      - name: security (adversarial tests against the compiled program, no network needed)
+        if: inputs.action == 'security'
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/ops.log") 2>&1
+          trap 'exec >&- 2>&-; sleep 2' EXIT
+          cargo test --lib
+          anchor build
+          cd security-tests
+          PAYMYBILL_SO="$GITHUB_WORKSPACE/target/deploy/paymybill.so" cargo test -- --test-threads=2 2>&1 | grep -E "^test |test result|panicked|FAILED" || true
+          PAYMYBILL_SO="$GITHUB_WORKSPACE/target/deploy/paymybill.so" cargo test -- --test-threads=2 >/dev/null 2>&1 && echo "SECURITY SUITE PASSED" || { echo "SECURITY SUITE FAILED"; exit 1; }
 
       - name: build
         if: inputs.action == 'build'

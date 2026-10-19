@@ -41,9 +41,12 @@ export function fmtUsd(usd: number): string {
 }
 
 /** Parse a decimal string like "0.5" or "1,25" to a number, or NaN. */
+/** Plain decimal only ("0.5", "1,25", ".5"): no exponents, hex, signs or separators, at most 9 decimals. */
 export function parseAmount(s: string): number {
-  const n = Number(s.replace(",", ".").trim());
-  return Number.isFinite(n) ? n : NaN;
+  const t = s.replace(",", ".").trim();
+  if (!/^(\d+\.?\d{0,9}|\.\d{1,9})$/.test(t)) return NaN;
+  const n = Number(t);
+  return Number.isFinite(n) && n <= 1e10 ? n : NaN;
 }
 
 /* ---------- friendly bill links ----------
@@ -108,5 +111,7 @@ export function friendlyError(e: unknown): string {
   if (/AlreadyPaid|already been paid/i.test(msg)) return "Someone just paid this bill.";
   if (/SelfPay|your own bill/i.test(msg)) return "You can't pay your own bill.";
   if (/blockhash/i.test(msg)) return "Network was slow. Try again.";
+  if (/BadText|invisible|direction-override/i.test(msg)) return "Text can't contain hidden or special control characters.";
+  if (/insufficient funds for rent|InsufficientFundsForRent/i.test(msg)) return "The amount is too small for the receiving account. Try a larger amount.";
   return msg.length > 140 ? msg.slice(0, 140) + "…" : msg;
 }

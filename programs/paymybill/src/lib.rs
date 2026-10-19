@@ -55,8 +55,39 @@ pub fn day_of(ts: i64) -> u32 {
 pub const STATUS_OPEN: u8 = 0;
 pub const STATUS_PAID: u8 = 1;
 
+/// Characters that would let someone spoof text on screen (or hide instructions from a human
+/// but not from an AI agent): control characters, soft hyphen, zero-width characters, the
+/// direction marks and overrides (U+202A..U+202E, U+2066..U+2069), line/paragraph separators,
+/// invisible fillers, byte-order mark, interlinear annotation marks and the invisible "tag"
+/// characters (U+E0000..U+E007F). Everything else (accents, emoji, CJK...) is allowed.
+fn is_unsafe_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c as u32,
+            0x00AD
+                | 0x061C
+                | 0x115F
+                | 0x1160
+                | 0x17B4
+                | 0x17B5
+                | 0x180E
+                | 0x200B..=0x200F
+                | 0x2028..=0x202E
+                | 0x2060..=0x206F
+                | 0x3164
+                | 0xFEFF
+                | 0xFFA0
+                | 0xFFF9..=0xFFFB
+                | 0xE0000..=0xE007F
+        )
+}
+
+fn clean_text(s: &str) -> bool {
+    !s.chars().any(is_unsafe_char)
+}
+
 fn valid_name(s: &str) -> bool {
-    s.len() <= NAME_MAX && !s.chars().any(|c| c.is_control())
+    s.len() <= NAME_MAX && clean_text(s)
 }
 
 fn valid_handle(s: &str) -> bool {
@@ -81,6 +112,7 @@ pub mod paymybill {
             BillError::BadTitle
         );
         require!(note.len() <= NOTE_MAX, BillError::NoteTooLong);
+        require!(clean_text(&title) && clean_text(&note), BillError::BadText);
 
         let bill = &mut ctx.accounts.bill;
         bill.status = STATUS_OPEN;
@@ -413,10 +445,12 @@ pub enum BillError {
     Overpay,
     #[msg("Contribution is below the minimum (0.001 SOL) and does not finish the bill")]
     TooSmall,
-    #[msg("Name must be at most 24 bytes with no control characters")]
+    #[msg("Name must be at most 24 bytes with no control or invisible characters")]
     BadName,
     #[msg("X handle must be at most 15 letters, numbers or underscores")]
     BadHandle,
+    #[msg("Text cannot contain control, invisible or direction-override characters")]
+    BadText,
 }
 
 #[cfg(test)]
@@ -486,6 +520,17 @@ mod tests {
         assert!(!valid_handle("@nico"));
         assert!(!valid_handle("a b"));
         assert!(!valid_handle("https://x.com/a"));
+    }
+
+    #[test]
+    fn spoofing_characters_are_rejected() {
+        for bad in ["\u{202E}x", "a\u{200B}b", "a\u{200F}", "\u{2066}", "\u{FEFF}", "a\u{00AD}b", "a\nb", "a\tb", "a\0b", "\u{E0041}", "\u{3164}", "a\u{2028}"] {
+            assert!(!clean_text(bad), "{:?}", bad);
+        }
+        for good in ["", "Alquiler marzo", "ñandú", "日本語", "Gracias 🙏", "a b", "#1 - ok (2)", "e\u{0301}"] {
+            assert!(clean_text(good), "{:?}", good);
+        }
+        assert!(!valid_name("a\u{200B}b"));
     }
 
     #[test]

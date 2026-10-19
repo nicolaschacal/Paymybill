@@ -68,6 +68,10 @@ Link previews (X, Telegram, …) use the tags in `app/index.html` and `app/publi
 
 Set `VITE_RPC_URL` to your own RPC for real use: public endpoints rate-limit `getProgramAccounts`.
 
+## Security
+
+See [SECURITY.md](SECURITY.md) (what was attacked, findings, what is not covered) and [MAINNET.md](MAINNET.md) (costs and checklist). Adversarial tests live in `security-tests/` and run from Actions > devnet-ops > `security`.
+
 ## Things to know
 
 - A 3% service fee is deducted from what the creator receives (`FEE_BPS` and `FEE_WALLET` in the program, mirrored in `app/src/chain.ts`); the payer pays exactly the bill amount. Creators can tick "add the fee on top" when posting to net the full amount. Changing the fee wallet or rate needs a program upgrade.

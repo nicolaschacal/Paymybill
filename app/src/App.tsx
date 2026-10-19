@@ -46,6 +46,7 @@ import {
   payBillIx,
   randomId,
   solToLamports,
+  cleanText,
 } from "./chain";
 import type { Bill, BillRef, Receipt, Supporter, SupporterRef } from "./chain";
 import { billLink, billPath, fmtDuration, fmtSol, fmtUsd, friendlyError, parseAmount, parseBillParam, short, timeAgo } from "./lib";
@@ -514,7 +515,7 @@ const whoLabel = (s: Supporter | undefined, owner: PublicKey) => (s?.name ? s.na
 function Handle({ handle }: { handle: string }) {
   if (!handle) return null;
   return (
-    <a className="handle" href={`https://x.com/${handle}`} target="_blank" rel="noreferrer">
+    <a className="handle" href={`https://x.com/${handle}`} target="_blank" rel="noreferrer" title="Handle typed by the payer. Not verified.">
       @{handle}
     </a>
   );
@@ -761,7 +762,7 @@ function NewBill() {
         <span className="lbl">
           What is it? <em className={tBytes > TITLE_MAX ? "bad" : ""}>{tBytes}/{TITLE_MAX}</em>
         </span>
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Electricity bill, October" autoFocus />
+        <input value={title} onChange={(e) => setTitle(cleanText(e.target.value.replace(/\s+/g, " ")))} placeholder="Electricity bill, October" autoFocus />
       </label>
 
       <label>
@@ -823,7 +824,7 @@ function NewBill() {
         <textarea
           rows={3}
           value={note}
-          onChange={(e) => setNote(e.target.value)}
+          onChange={(e) => setNote(cleanText(e.target.value.replace(/\s+/g, " ")))}
           placeholder="Short context so people know what they’re helping with."
         />
       </label>
@@ -916,7 +917,7 @@ function SupporterCard({ owner }: { owner: PublicKey }) {
           : "Pay a bill and you’ll show up on the leaderboard. You can pick the name and X handle people see here."}
       </div>
       <div className="mycard-form">
-        <input value={name} maxLength={40} placeholder="Name (optional)" onChange={(e) => setName(e.target.value.replace(/[\u0000-\u001f\u007f]/g, ""))} />
+        <input value={name} maxLength={40} placeholder="Name (optional)" onChange={(e) => setName(cleanText(e.target.value))} />
         <input
           value={handle}
           placeholder="X handle (optional)"
@@ -1470,7 +1471,7 @@ function BillPage({ addr }: { addr: string }) {
           )}
           {showId ? (
             <div className="idfields">
-              <input value={name} maxLength={40} placeholder="Name on the leaderboard (optional)" onChange={(e) => setName(e.target.value.replace(/[\u0000-\u001f\u007f]/g, ""))} />
+              <input value={name} maxLength={40} placeholder="Name on the leaderboard (optional)" onChange={(e) => setName(cleanText(e.target.value))} />
               <input
                 value={handle}
                 placeholder="X handle (optional)"
@@ -1589,7 +1590,7 @@ function BillRoute({ param }: { param: string }) {
   return (
     <>
       <div className="notice warn">
-        More than one bill uses this link. Check who posted each one (the address) before paying.
+        More than one bill uses this link. They are listed oldest first. Check who posted each one (the address) before paying.
       </div>
       <div className="list">
         {matches.map((b) => (
