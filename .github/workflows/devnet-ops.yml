@@ -222,7 +222,7 @@ jobs:
           sleep 2
           f="$RUNNER_TEMP/ops.log"
           [ -f "$f" ] || exit 0
-          msg=$(grep -v "^ *Compiling \|^ *Downloaded \|^ *Downloading " "$f" | tail -n 120 | python3 -c 'import sys; t=sys.stdin.read(); print(t.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))')
+          msg=$(grep -v "^ *Compiling \|^ *Downloaded \|^ *Downloading \|^npm warn\|^ *$" "$f" | cut -c1-150 | tail -n 45 | python3 -c 'import sys; t=sys.stdin.read(); print(t.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))')
           echo "::notice title=ops-log-tail::${msg}"
 
       - name: Upload outputs
