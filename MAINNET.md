@@ -4,14 +4,14 @@ Do these in order. Nothing here is done automatically.
 
 ## 1. Money you need
 
-Program rent is locked while the program exists (recoverable only by closing the program). Devnet shows a data length of about 213 KB and about 1.1 SOL balance; the rent formula gives up to about 1.5 SOL for that size. Check the exact number right before deploying with `solana rent <bytes>`.
+Program rent is locked while the program exists (recoverable only by closing the program). The current build is about 224 KB (devnet data length 223,640 bytes), which by the rent formula `(bytes + 173) x 6,960 lamports` is about 1.56 SOL. Check the exact number right before deploying with `solana rent 223640`.
 
 | Item | Amount |
 | --- | --- |
-| Program rent (locked) | about 1.1-1.5 SOL |
-| Temporary buffer during deploy (refunded) | about the same again |
+| Program rent (locked) | about 1.6 SOL |
+| Temporary buffer during deploy (refunded) | about 1.6 SOL more, returned when the deploy ends |
 | Fees and margin | 0.05 SOL |
-| **Have in the deploy wallet** | **about 3.5 SOL** |
+| **Have in the deploy wallet** | **about 3.5 SOL** (1.6 + 1.6 + margin) |
 | Fee wallet starting balance (must never reach 0) | 0.01 SOL or more |
 | Paid RPC (Helius, Triton, QuickNode...) | their monthly plan |
 | Domain `paymybill.fun` | registrar price |
