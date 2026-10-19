@@ -5,7 +5,11 @@ import { WalletReadyState } from "@solana/wallet-adapter-base";
 import { PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
 import {
   BILL_ACCOUNT_SIZE,
+  HANDLE_MAX,
+  MIN_CONTRIB,
+  NAME_MAX,
   RECEIPT_ACCOUNT_SIZE,
+  SUPPORTER_ACCOUNT_SIZE,
   CLUSTER,
   NOTE_MAX,
   PROGRAM_ID,
@@ -13,9 +17,20 @@ import {
   byteLen,
   closeBillIx,
   closeReceiptIx,
+  closeSupporterIx,
+  deriveSupporter,
   fetchReceipt,
+  fetchReceiptsForBill,
   fetchReceipts,
-  legacyReceipt,
+  fetchSupporter,
+  fetchSupporters,
+  listSupporterRefs,
+  rankAllTime,
+  rankIfPaying,
+  rankToday,
+  secondsToReset,
+  utcDay,
+  setSupporterIx,
   createBillIx,
   explorerAddr,
   explorerTx,
@@ -32,8 +47,8 @@ import {
   randomId,
   solToLamports,
 } from "./chain";
-import type { Bill, BillRef, Receipt } from "./chain";
-import { billLink, billPath, fmtSol, fmtUsd, friendlyError, parseAmount, parseBillParam, short, timeAgo } from "./lib";
+import type { Bill, BillRef, Receipt, Supporter, SupporterRef } from "./chain";
+import { billLink, billPath, fmtDuration, fmtSol, fmtUsd, friendlyError, parseAmount, parseBillParam, short, timeAgo } from "./lib";
 
 const REPO_URL = "https://github.com/nicolaschacal/paymybill";
 
@@ -162,6 +177,42 @@ function usePagedBills(status: 0 | 1, enabled: boolean) {
   };
 }
 
+// Everyone's totals, shared by the leaderboard and the pay page (cached for a few seconds).
+let boardCache: { at: number; p: Promise<SupporterRef[]> } | null = null;
+function invalidateBoard() {
+  boardCache = null;
+}
+function useBoardRefs() {
+  const { connection } = useConnection();
+  const [refs, setRefs] = useState<SupporterRef[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(() => {
+    if (!boardCache || Date.now() - boardCache.at > 15_000) {
+      const p = listSupporterRefs(connection);
+      boardCache = { at: Date.now(), p };
+      p.catch(() => {
+        if (boardCache?.p === p) boardCache = null;
+      });
+    }
+    boardCache.p.then(
+      (r) => {
+        setError(null);
+        setRefs(r);
+      },
+      (e) => {
+        setError(friendlyError(e));
+        setRefs((r) => r ?? []);
+      },
+    );
+  }, [connection]);
+  useEffect(load, [load]);
+  const reload = useCallback(() => {
+    invalidateBoard();
+    load();
+  }, [load]);
+  return { refs, error, reload };
+}
+
 /** Bills the wallet posted, plus receipts for bills it paid (two filtered queries). */
 function useMyBills(user?: PublicKey) {
   const { connection } = useConnection();
@@ -172,16 +223,11 @@ function useMyBills(user?: PublicKey) {
     if (!user) return;
     setError(null);
     try {
-      const [made, receipts, paid] = await Promise.all([
+      const [made, receipts] = await Promise.all([
         fetchBills(connection, { creator: user }),
         fetchReceipts(connection, user),
-        fetchBills(connection, { payer: user }),
       ]);
-      // bills paid before receipts existed still show up, as read-only receipts
-      const have = new Set(receipts.map((r) => r.bill.toBase58()));
-      const legacy = paid.filter((b) => !have.has(b.address.toBase58())).map(legacyReceipt);
-      const all = [...receipts, ...legacy].sort((x, y) => y.paidAt - x.paidAt);
-      setData({ made, receipts: all });
+      setData({ made, receipts });
     } catch (e) {
       setError(friendlyError(e));
       setData((d) => d ?? { made: [], receipts: [] });
@@ -390,6 +436,7 @@ function BillCard({ bill, usd, mine, byAddress }: { bill: Bill; usd: number | nu
           {mine && <span className="pill dark">yours</span>}
           <span>{timeAgo(bill.createdAt)}</span>
         </div>
+        {!bill.paid && bill.raised > 0n && <Progress bill={bill} />}
       </div>
       <div className="card-side">
         <Amount lamports={bill.lamports} usd={usd} />
@@ -405,10 +452,23 @@ function BillCard({ bill, usd, mine, byAddress }: { bill: Bill; usd: number | nu
   );
 }
 
-function ReceiptCard({ r, usd }: { r: Receipt; usd: number | null }) {
-  const href = r.legacy ? `/b/${r.bill.toBase58()}` : `/r/${r.address.toBase58()}`;
+function Progress({ bill }: { bill: Bill }) {
+  const pct = Number((bill.raised * 1000n) / bill.lamports) / 10;
   return (
-    <a className="card paid" href={href}>
+    <div className="progress">
+      <div className="bar">
+        <i style={{ width: `${Math.min(100, pct)}%` }} />
+      </div>
+      <span>
+        {fmtSol(bill.raised)} of {fmtSol(bill.lamports)} SOL
+      </span>
+    </div>
+  );
+}
+
+function ReceiptCard({ r, usd }: { r: Receipt; usd: number | null }) {
+  return (
+    <a className="card paid" href={`/r/${r.address.toBase58()}`}>
       <div className="card-main">
         <div className="card-title">{r.title}</div>
         {r.note && <div className="card-note">{r.note}</div>}
@@ -449,6 +509,105 @@ function Skeletons() {
 
 /* ---------------------------------------------------------------- pages */
 
+const whoLabel = (s: Supporter | undefined, owner: PublicKey) => (s?.name ? s.name : short(owner));
+
+function Handle({ handle }: { handle: string }) {
+  if (!handle) return null;
+  return (
+    <a className="handle" href={`https://x.com/${handle}`} target="_blank" rel="noreferrer">
+      @{handle}
+    </a>
+  );
+}
+
+function Leaderboard() {
+  const { connection } = useConnection();
+  const { publicKey } = useWallet();
+  const { refs, error } = useBoardRefs();
+  const [kind, setKind] = useState<"all" | "today">("all");
+  const [people, setPeople] = useState<Map<string, Supporter>>(new Map());
+
+  const ranked = useMemo(() => (refs ? (kind === "all" ? rankAllTime(refs) : rankToday(refs)) : null), [refs, kind]);
+  const top = ranked?.slice(0, 5) ?? [];
+  const topKey = top.map((r) => r.address.toBase58()).join(",");
+
+  useEffect(() => {
+    if (!top.length) return;
+    let live = true;
+    fetchSupporters(connection, top.map((r) => r.address))
+      .then((list) => {
+        if (live)
+          setPeople((m) => {
+            const n = new Map(m);
+            list.forEach((x) => n.set(x.address.toBase58(), x));
+            return n;
+          });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connection, topKey]);
+
+  const myIdx = ranked && publicKey ? ranked.findIndex((r) => r.owner.equals(publicKey)) : -1;
+  const value = (r: SupporterRef) => (kind === "all" ? r.total : r.dayTotal);
+
+  return (
+    <section className="board" aria-label="Top supporters">
+      <div className="board-head">
+        <h2>Top supporters</h2>
+        <div className="seg">
+          <button className={kind === "all" ? "on" : ""} onClick={() => setKind("all")}>
+            All time
+          </button>
+          <button className={kind === "today" ? "on" : ""} onClick={() => setKind("today")}>
+            Today
+          </button>
+        </div>
+      </div>
+      <div className="fine">
+        {kind === "all"
+          ? "Who has paid the most towards other people’s bills."
+          : `Resets at 00:00 UTC, in ${fmtDuration(secondsToReset())}.`}
+      </div>
+      {error && <div className="notice">Couldn’t load the ranking: {error}</div>}
+      {ranked === null ? (
+        <div className="board-rows">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="board-row skel" />
+          ))}
+        </div>
+      ) : top.length === 0 ? (
+        <div className="board-empty">
+          {kind === "all" ? "Nobody yet." : "Nobody yet today."} Pay a bill and take the first spot.
+        </div>
+      ) : (
+        <div className="board-rows">
+          {top.map((r, i) => {
+            const person = people.get(r.address.toBase58());
+            const me = !!publicKey && r.owner.equals(publicKey);
+            return (
+              <div key={r.address.toBase58()} className={"board-row" + (i === 0 ? " first" : "")}>
+                <span className="rank">{i + 1}</span>
+                <span className="who">
+                  <b title={r.owner.toBase58()}>{whoLabel(person, r.owner)}</b>
+                  {me && <span className="pill dark">you</span>}
+                  {person && <Handle handle={person.handle} />}
+                </span>
+                <span className="amt sm">
+                  {fmtSol(value(r))} <small>SOL</small>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {myIdx >= 5 && <div className="fine">You’re #{myIdx + 1}.</div>}
+    </section>
+  );
+}
+
 function Explore() {
   const { publicKey } = useWallet();
   const usd = useSolUsd();
@@ -475,6 +634,8 @@ function Explore() {
           </a>
         </div>
       </section>
+
+      <Leaderboard />
 
       <div className="tabs" role="tablist">
         <button className={tab === "open" ? "on" : ""} onClick={() => setTab("open")}>
@@ -683,6 +844,110 @@ function NewBill() {
   );
 }
 
+function SupporterCard({ owner }: { owner: PublicKey }) {
+  const { connection } = useConnection();
+  const send = useSender();
+  const toast = useToast();
+  const [card, setCard] = useState<Supporter | null | undefined>(undefined);
+  const [name, setName] = useState("");
+  const [handle, setHandle] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const [rent, setRent] = useState<bigint>(1_800_000n);
+
+  const load = useCallback(async () => {
+    try {
+      const c = await fetchSupporter(connection, owner);
+      setCard(c);
+      setName(c?.name ?? "");
+      setHandle(c?.handle ?? "");
+    } catch {
+      setCard(null);
+    }
+  }, [connection, owner]);
+  useEffect(() => {
+    load();
+  }, [load]);
+  useEffect(() => {
+    connection
+      .getMinimumBalanceForRentExemption(SUPPORTER_ACCOUNT_SIZE)
+      .then((l) => setRent(BigInt(l)))
+      .catch(() => {});
+  }, [connection]);
+
+  const nameOk = byteLen(name.trim()) <= NAME_MAX;
+  const changed = card ? name.trim() !== card.name || handle !== card.handle : name.trim() !== "" || handle !== "";
+
+  async function save() {
+    setBusy(true);
+    try {
+      const sig = await send([setSupporterIx(owner, name.trim(), handle)]);
+      toast(card ? "Card updated." : "Card created.", explorerTx(sig));
+      invalidateBoard();
+      await load();
+    } catch (e) {
+      toast(friendlyError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function remove() {
+    setBusy(true);
+    try {
+      const sig = await send([closeSupporterIx(owner)]);
+      toast("Card removed. Deposit refunded.", explorerTx(sig));
+      invalidateBoard();
+      setConfirm(false);
+      await load();
+    } catch (e) {
+      toast(friendlyError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (card === undefined) return null;
+  return (
+    <section className="mycard">
+      <h3 className="sec-title">Supporter card</h3>
+      <div className="fine">
+        {card
+          ? `You’ve paid ${fmtSol(card.total)} SOL across ${card.billsHelped} bill${card.billsHelped === 1 ? "" : "s"}${card.day === utcDay() ? `, ${fmtSol(card.dayTotal)} SOL today` : ""}.`
+          : "Pay a bill and you’ll show up on the leaderboard. You can pick the name and X handle people see here."}
+      </div>
+      <div className="mycard-form">
+        <input value={name} maxLength={40} placeholder="Name (optional)" onChange={(e) => setName(e.target.value.replace(/[\u0000-\u001f\u007f]/g, ""))} />
+        <input
+          value={handle}
+          placeholder="X handle (optional)"
+          onChange={(e) => setHandle(e.target.value.replace(/^@/, "").replace(/[^A-Za-z0-9_]/g, "").slice(0, HANDLE_MAX))}
+        />
+        <button className="btn red sm" disabled={busy || !nameOk || !changed} onClick={save}>
+          {busy ? "…" : card ? "Save" : "Create card"}
+        </button>
+      </div>
+      {!nameOk && <div className="fine bad">Name is too long (max {NAME_MAX} bytes).</div>}
+      {!card && <div className="fine">Creating a card holds a refundable deposit of ≈ {fmtSol(rent, 4)} SOL.</div>}
+      {card &&
+        (confirm ? (
+          <span className="confirm">
+            Remove card, lose your ranking and get the deposit back?
+            <button className="link danger" disabled={busy} onClick={remove}>
+              Yes
+            </button>
+            <button className="link" onClick={() => setConfirm(false)}>
+              No
+            </button>
+          </span>
+        ) : (
+          <button className="link danger" onClick={() => setConfirm(true)}>
+            Remove card
+          </button>
+        ))}
+    </section>
+  );
+}
+
 function Mine() {
   const { publicKey } = useWallet();
   const usd = useSolUsd();
@@ -754,6 +1019,7 @@ function Mine() {
           New bill
         </a>
       </div>
+      <SupporterCard owner={publicKey} />
       {error && <div className="notice">Couldn’t load bills: {error}</div>}
       {data === null ? (
         <Skeletons />
@@ -802,15 +1068,13 @@ function Mine() {
                 return (
                   <div key={k} className="mine-row">
                     <ReceiptCard r={r} usd={usd} />
-                    {!r.legacy && (
-                      <Actions
-                        k={k}
-                        address={r.address}
-                        kind="receipt"
-                        label="Remove receipt"
-                        prompt="Remove receipt and refund deposit?"
-                      />
-                    )}
+                    <Actions
+                      k={k}
+                      address={r.address}
+                      kind="receipt"
+                      label="Remove receipt"
+                      prompt="Remove receipt and refund deposit?"
+                    />
                   </div>
                 );
               })}
@@ -937,12 +1201,15 @@ function ReceiptPage({ addr }: { addr: string }) {
   );
 }
 
+type Backer = { r: Receipt; s?: Supporter };
+
 function BillPage({ addr }: { addr: string }) {
   const { connection } = useConnection();
   const { publicKey } = useWallet();
   const send = useSender();
   const toast = useToast();
   const usd = useSolUsd();
+  const board = useBoardRefs();
 
   const pk = useMemo(() => {
     try {
@@ -953,16 +1220,34 @@ function BillPage({ addr }: { addr: string }) {
   }, [addr]);
 
   const [bill, setBill] = useState<Bill | null | undefined>(undefined);
+  const [backers, setBackers] = useState<Backer[] | null>(null);
+  const [me, setMe] = useState<Supporter | null | undefined>(undefined);
   const [balance, setBalance] = useState<bigint | null>(null);
+  const [rent, setRent] = useState<{ receipt: bigint; card: bigint }>({ receipt: 3_300_000n, card: 1_800_000n });
   const [step, setStep] = useState<"view" | "confirm">("view");
+  const [pick, setPick] = useState<"rest" | "half" | "quarter" | "custom">("rest");
+  const [custom, setCustom] = useState("");
+  const [name, setName] = useState("");
+  const [handle, setHandle] = useState("");
+  const [showId, setShowId] = useState(false);
   const [busy, setBusy] = useState(false);
   const [txSig, setTxSig] = useState<string | null>(null);
-  const [rcRent, setRcRent] = useState<bigint>(3_000_000n);
 
   const load = useCallback(async () => {
     if (!pk) return setBill(null);
     try {
-      setBill(await fetchBill(connection, pk));
+      const b = await fetchBill(connection, pk);
+      setBill(b);
+      if (b) {
+        const rs = await fetchReceiptsForBill(connection, pk);
+        const sup = await fetchSupporters(connection, rs.map((r) => deriveSupporter(r.payer))).catch(() => []);
+        const byOwner = new Map(sup.map((x) => [x.owner.toBase58(), x]));
+        setBackers(
+          rs
+            .sort((x, y) => (x.lamports === y.lamports ? 0 : x.lamports > y.lamports ? -1 : 1))
+            .map((r) => ({ r, s: byOwner.get(r.payer.toBase58()) })),
+        );
+      }
     } catch {
       setBill(null);
     }
@@ -970,15 +1255,33 @@ function BillPage({ addr }: { addr: string }) {
 
   useEffect(() => {
     setBill(undefined);
+    setBackers(null);
     load();
   }, [load]);
 
   useEffect(() => {
-    connection
-      .getMinimumBalanceForRentExemption(RECEIPT_ACCOUNT_SIZE)
-      .then((l) => setRcRent(BigInt(l)))
+    Promise.all([
+      connection.getMinimumBalanceForRentExemption(RECEIPT_ACCOUNT_SIZE),
+      connection.getMinimumBalanceForRentExemption(SUPPORTER_ACCOUNT_SIZE),
+    ])
+      .then(([receipt, card]) => setRent({ receipt: BigInt(receipt), card: BigInt(card) }))
       .catch(() => {});
   }, [connection]);
+
+  const loadMe = useCallback(async () => {
+    if (!publicKey) return setMe(undefined);
+    try {
+      const c = await fetchSupporter(connection, publicKey);
+      setMe(c);
+      setName(c?.name ?? "");
+      setHandle(c?.handle ?? "");
+    } catch {
+      setMe(null);
+    }
+  }, [connection, publicKey]);
+  useEffect(() => {
+    loadMe();
+  }, [loadMe]);
 
   useEffect(() => {
     if (!publicKey) return setBalance(null);
@@ -986,7 +1289,7 @@ function BillPage({ addr }: { addr: string }) {
       .getBalance(publicKey, "confirmed")
       .then((l) => setBalance(BigInt(l)))
       .catch(() => {});
-  }, [connection, publicKey, bill?.paid]);
+  }, [connection, publicKey, bill?.raised]);
 
   if (bill === undefined) return <div className="panel skel tall" />;
   if (!bill) {
@@ -1002,19 +1305,43 @@ function BillPage({ addr }: { addr: string }) {
 
   const mine = !!publicKey && bill.creator.equals(publicKey);
   const short_ = short(bill.creator, 5);
-  const fee = feeFor(bill.lamports);
-  const toCreator = bill.lamports - fee;
-  const enough = balance === null || balance >= bill.lamports + rcRent + 10_000n;
+  const remaining = bill.lamports - bill.raised;
+  const contrib: bigint | null =
+    pick === "rest"
+      ? remaining
+      : pick === "half"
+        ? remaining / 2n
+        : pick === "quarter"
+          ? remaining / 4n
+          : Number.isFinite(parseAmount(custom)) && parseAmount(custom) > 0
+            ? solToLamports(parseAmount(custom))
+            : null;
+  const tooSmall = contrib !== null && contrib < MIN_CONTRIB && contrib !== remaining;
+  const tooBig = contrib !== null && contrib > remaining;
+  const nameOk = byteLen(name.trim()) <= NAME_MAX;
+  const valid = contrib !== null && contrib > 0n && !tooSmall && !tooBig && nameOk;
+  const fee = valid ? feeFor(contrib!) : 0n;
+  const toCreator = valid ? contrib! - fee : 0n;
+
+  const iPaid = !!publicKey && !!backers?.some((x) => x.r.payer.equals(publicKey));
+  const deposits = (iPaid ? 0n : rent.receipt) + (me ? 0n : rent.card);
+  const enough = balance === null || !valid || balance >= contrib! + deposits + 20_000n;
+
+  const rankAll = valid && board.refs ? rankIfPaying(board.refs, publicKey, contrib!, "all") : null;
+  const rankDay = valid && board.refs ? rankIfPaying(board.refs, publicKey, contrib!, "today") : null;
 
   async function pay() {
-    if (!publicKey || !bill) return;
+    if (!publicKey || !bill || !valid) return;
     setBusy(true);
     try {
-      const sig = await send([payBillIx(publicKey, bill)]);
+      const sig = await send([payBillIx(publicKey, bill, contrib!, name.trim(), handle)]);
       setTxSig(sig);
-      toast("Paid. Thank you!", explorerTx(sig));
+      toast(contrib === remaining ? "Bill paid. Thank you!" : "Thanks for chipping in!", explorerTx(sig));
       setStep("view");
-      await load();
+      setPick("rest");
+      setCustom("");
+      board.reload();
+      await Promise.all([load(), loadMe()]);
     } catch (e) {
       toast(friendlyError(e));
       await load();
@@ -1022,6 +1349,19 @@ function BillPage({ addr }: { addr: string }) {
       setBusy(false);
     }
   }
+
+  const chip = (id: typeof pick, label: string, amount: bigint) => {
+    const ok = amount >= MIN_CONTRIB || amount === remaining;
+    return (
+      <button key={id} className={"chip-btn" + (pick === id ? " on" : "")} disabled={!ok || amount <= 0n} onClick={() => setPick(id)}>
+        {label}
+        <small>{fmtSol(amount)} SOL</small>
+      </button>
+    );
+  };
+
+  const shareText = encodeURIComponent(`I just helped pay "${bill.title}" on paymybill.fun`);
+  const shareHref = `https://x.com/intent/post?text=${shareText}&url=${encodeURIComponent(billLink(bill))}`;
 
   return (
     <div className="panel detail">
@@ -1045,21 +1385,22 @@ function BillPage({ addr }: { addr: string }) {
 
       {bill.note && <p className="note">{bill.note}</p>}
 
+      {!bill.paid && bill.raised > 0n && (
+        <div className="progress-box">
+          <Progress bill={bill} />
+          <div className="fine">
+            {bill.backers} {bill.backers === 1 ? "person has" : "people have"} chipped in. {fmtSol(remaining)} SOL left.
+          </div>
+        </div>
+      )}
+
       {bill.paid ? (
         <div className="receipt">
           <div className="badge big">
             <Check /> Paid in full
           </div>
           <div className="fine">
-            {bill.payer && (
-              <>
-                By{" "}
-                <a href={explorerAddr(bill.payer.toBase58())} target="_blank" rel="noreferrer">
-                  {short(bill.payer, 5)}
-                </a>{" "}
-                · {timeAgo(bill.paidAt)}
-              </>
-            )}
+            {bill.backers} {bill.backers === 1 ? "supporter" : "supporters"} · {timeAgo(bill.paidAt)}
             {txSig && (
               <>
                 {" "}
@@ -1070,10 +1411,15 @@ function BillPage({ addr }: { addr: string }) {
               </>
             )}
           </div>
+          {txSig && (
+            <a className="link" href={shareHref} target="_blank" rel="noreferrer">
+              Share on X ↗
+            </a>
+          )}
         </div>
       ) : mine ? (
         <div className="pay-box">
-          <div className="fine">This is your bill. Share it so someone can pay it.</div>
+          <div className="fine">This is your bill. Share it so people can chip in.</div>
           <div className="share">
             <input readOnly value={billLink(bill)} onFocus={(e) => e.currentTarget.select()} />
             <button
@@ -1093,19 +1439,61 @@ function BillPage({ addr }: { addr: string }) {
         </div>
       ) : step === "view" ? (
         <div className="pay-box">
-          <button className="btn red lg block" onClick={() => setStep("confirm")}>
-            Pay {fmtSol(bill.lamports)} SOL
-          </button>
-          <div className="fine">
-            Anyone can post a bill, so only pay people you want to help.
+          {iPaid && <div className="fine">You already put money into this bill. You can add more.</div>}
+          <div className="lbl">
+            <span>How much do you want to pay?</span>
           </div>
+          <div className="chips">
+            {chip("rest", "All", remaining)}
+            {chip("half", "Half", remaining / 2n)}
+            {chip("quarter", "Quarter", remaining / 4n)}
+            <label className={"chip-btn input" + (pick === "custom" ? " on" : "")}>
+              <input
+                inputMode="decimal"
+                placeholder="Other"
+                value={custom}
+                onFocus={() => setPick("custom")}
+                onChange={(e) => {
+                  setPick("custom");
+                  setCustom(e.target.value);
+                }}
+              />
+              <small>SOL</small>
+            </label>
+          </div>
+          {tooSmall && <div className="fine bad">The minimum is {fmtSol(MIN_CONTRIB, 3)} SOL, unless you pay what’s left.</div>}
+          {tooBig && <div className="fine bad">Only {fmtSol(remaining)} SOL is left on this bill.</div>}
+          {valid && rankAll !== null && rankDay !== null && (
+            <div className="teaser">
+              {rankAll === 1 ? "You’d take #1 all-time" : `You’d be #${rankAll} all-time`} · {rankDay === 1 ? "#1" : `#${rankDay}`} today
+            </div>
+          )}
+          {showId ? (
+            <div className="idfields">
+              <input value={name} maxLength={40} placeholder="Name on the leaderboard (optional)" onChange={(e) => setName(e.target.value.replace(/[\u0000-\u001f\u007f]/g, ""))} />
+              <input
+                value={handle}
+                placeholder="X handle (optional)"
+                onChange={(e) => setHandle(e.target.value.replace(/^@/, "").replace(/[^A-Za-z0-9_]/g, "").slice(0, HANDLE_MAX))}
+              />
+              {!nameOk && <div className="fine bad">Name is too long (max {NAME_MAX} bytes).</div>}
+            </div>
+          ) : (
+            <button className="link" onClick={() => setShowId(true)}>
+              {me?.name || me?.handle ? "Edit the name shown on the leaderboard" : "Add my name and X handle to the leaderboard"}
+            </button>
+          )}
+          <button className="btn red lg block" disabled={!valid} onClick={() => setStep("confirm")}>
+            Pay {valid ? fmtSol(contrib!, 4) : "…"} SOL
+          </button>
+          <div className="fine">Anyone can post a bill, so only pay people you want to help.</div>
         </div>
       ) : (
         <div className="pay-box confirm-box">
           <div className="sum">
             <div>
               You send
-              <b>{fmtSol(bill.lamports)} SOL</b>
+              <b>{fmtSol(contrib!, 4)} SOL</b>
             </div>
             <div>
               To
@@ -1121,12 +1509,18 @@ function BillPage({ addr }: { addr: string }) {
               <span>Service fee (3%)</span>
               <span>{fmtSol(fee, 6)} SOL</span>
             </div>
+            {deposits > 0n && (
+              <div>
+                <span>Refundable deposit</span>
+                <span>≈ {fmtSol(deposits, 4)} SOL</span>
+              </div>
+            )}
           </div>
-          {!enough && <div className="notice warn">Your wallet doesn’t have enough SOL ({fmtSol(balance ?? 0n)} available, the receipt deposit needs ≈ {fmtSol(rcRent, 4)} more).</div>}
+          {!enough && <div className="notice warn">Your wallet doesn’t have enough SOL ({fmtSol(balance ?? 0n)} available).</div>}
           <div className="fine">
-            The bill costs exactly this amount: 97% goes straight to the creator and 3% to paymybill.fun.
-            You also get a receipt stored on Solana, with a refundable deposit of ≈ {fmtSol(rcRent, 4)} SOL
-            you get back when you remove it. Payments are final.
+            You pay exactly {fmtSol(contrib!, 4)} SOL: 97% goes straight to the creator and 3% to paymybill.fun.
+            {deposits > 0n && " The deposit pays for your receipt and leaderboard card on Solana, and you get it back if you remove them."}{" "}
+            Payments are final.
           </div>
           <div className="row">
             <button className="btn ghost" onClick={() => setStep("view")} disabled={busy}>
@@ -1136,6 +1530,25 @@ function BillPage({ addr }: { addr: string }) {
               {busy ? "Confirm in your wallet…" : "Confirm and pay"}
             </button>
           </div>
+        </div>
+      )}
+
+      {backers && backers.length > 0 && (
+        <div className="backers">
+          <h3 className="sec-title">
+            Supporters <span>{backers.length}</span>
+          </h3>
+          {backers.slice(0, 8).map(({ r, s }) => (
+            <div key={r.address.toBase58()} className="backer">
+              <span className="who">
+                <b title={r.payer.toBase58()}>{whoLabel(s, r.payer)}</b>
+                {!!publicKey && r.payer.equals(publicKey) && <span className="pill dark">you</span>}
+                {s && <Handle handle={s.handle} />}
+              </span>
+              <span>{fmtSol(r.lamports, 4)} SOL</span>
+            </div>
+          ))}
+          {backers.length > 8 && <div className="fine">and {backers.length - 8} more</div>}
         </div>
       )}
     </div>
@@ -1246,6 +1659,9 @@ export function App() {
           {CLUSTER !== "mainnet-beta" && <span className="pill dark">{CLUSTER}</span>}
           <a href={explorerAddr(PROGRAM_ID.toBase58())} target="_blank" rel="noreferrer">
             Program ↗
+          </a>
+          <a href="/agents.md" target="_blank" rel="noreferrer">
+            For agents ↗
           </a>
           <a href={REPO_URL} target="_blank" rel="noreferrer">
             Code ↗

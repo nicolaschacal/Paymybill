@@ -14,6 +14,7 @@ on:
           - test-app
           - build
           - deploy
+          - e2e
 
 permissions:
   contents: write
@@ -127,7 +128,17 @@ jobs:
         run: |
           exec > >(tee -a "$RUNNER_TEMP/ops.log") 2>&1
           trap 'exec >&- 2>&-; sleep 2' EXIT
-          cd app && npm ci && npm run build
+          cd app && npm ci && npm run check:agent && npm run build
+
+      - name: e2e (devnet, real transactions with throwaway wallets)
+        if: inputs.action == 'e2e'
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/ops.log") 2>&1
+          trap 'exec >&- 2>&-; sleep 2' EXIT
+          cd app
+          npm ci
+          npm run check:agent
+          E2E_FUNDER="$GITHUB_WORKSPACE/artifacts/private/admin-keypair.json" npm run e2e
 
       - name: build
         if: inputs.action == 'build'

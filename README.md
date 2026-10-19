@@ -6,7 +6,7 @@ Create a profile-less bill ("Electricity, October — 0.06 SOL"), share the link
 
 ## How it stays onchain
 
-- **One PDA per bill, plus one receipt PDA per payment.** No global registry, no counter, no user profile, no escrow, no token accounts. The bill id is a random `u64` picked by the client, so no counter account is needed.
+- **One PDA per bill, one receipt PDA per (bill, payer) and one optional supporter PDA per payer.** No global registry, no counter, no user profile, no escrow, no token accounts. The bill id is a random `u64` picked by the client, so no counter account is needed.
 - **Seeds:** `["bill", creator, id_le_bytes]`. Fixed size: 322 bytes (≈0.003 SOL rent, refunded when the creator closes the bill).
 - **Non-custodial:** `pay_bill` does a System Program transfer payer → creator and stamps the bill in the same transaction. The program never holds funds.
 - **No backend:** the app is a static site. Bills are listed with `getProgramAccounts` (filtered by size, discriminator and creator) straight from an RPC.
@@ -15,10 +15,20 @@ Create a profile-less bill ("Electricity, October — 0.06 SOL"), share the link
 
 | Instruction | Who | What |
 | --- | --- | --- |
-| `create_bill(id, amount, title, note)` | creator | Creates the bill PDA (title ≤ 48 bytes, note ≤ 160 bytes). |
-| `pay_bill()` | anyone but the creator | Takes `amount` from the payer: 97% to the creator, 3% of it to the fee wallet instead (the payer pays exactly the bill amount), marks the bill paid and creates the payer's receipt PDA (seeds `["receipt", bill]`, refundable deposit paid by the payer). |
-| `close_receipt()` | payer | Closes the receipt and refunds its deposit. The receipt survives if the creator closes the bill. |
-| `close_bill()` | creator | Closes an open or paid bill and refunds the rent. |
+| `create_bill(id, amount, title, note)` | creator | Creates the bill PDA (title ≤ 48 bytes, note ≤ 160 bytes). `amount` is the target. |
+| `pay_bill(amount, name, handle)` | anyone but the creator | Chips in `amount` (≥ 0.001 SOL, or whatever is left; never more than what is left). The payer sends exactly `amount`: 97% goes to the creator and 3% to the fee wallet, atomically. When `raised` reaches the target the bill flips to paid. Creates or updates the payer's receipt and supporter card; optional `name` (≤ 24 bytes) and X `handle` (≤ 15 chars) are stored on the card. |
+| `close_bill()` | creator | Closes an open or paid bill and refunds the rent. Money already contributed stays with the creator and payers keep their receipts. |
+| `close_receipt()` | payer | Closes the receipt and refunds its deposit. |
+| `set_supporter(name, handle)` | anyone | Creates or edits the supporter card without paying. |
+| `close_supporter()` | owner | Deletes the card (and its leaderboard position) and refunds the deposit. |
+
+### Leaderboards
+
+The supporter card holds lifetime and per-UTC-day totals. Clients build **All time** and **Today** (resets at 00:00 UTC) with one `getProgramAccounts` over supporter accounts (sliced to ~70 bytes each), then fetch full cards only for the top rows. Ties go to whoever reached the total first. Closing a card removes the wallet from the boards.
+
+### For agents
+
+There is no server and no HTTP API, so agents pay the program directly with their own wallet. `app/public/agents.md` (served at `/agents.md`, with `/llms.txt` as an index) documents the accounts, instruction formats and safety rules, and `app/agent/cli.ts` is a ready-to-run CLI: `npm run agent -- list | board [--today] | me | pay <bill> <sol|rest> [--name N] [--handle H]`.
 
 Amounts are in SOL. The UI can take USD and converts at the current rate when posting (rate from Coinbase's public API; only a convenience, the bill is priced in SOL).
 
@@ -39,7 +49,7 @@ Build and deploy run in the `devnet-ops` workflow (Actions tab → devnet-ops �
 2. `deploy` builds and deploys. The first run creates the program address, writes it into the repo and commits it; later runs upgrade the same program.
 3. `status` shows the wallet balance and the deployed program.
 
-Locally, `cargo test --lib` checks the layout and discriminators the frontend relies on.
+Locally, `cargo test --lib` checks the layout and discriminators the frontend relies on. The `e2e` action runs `app/agent/e2e.ts` against devnet: it funds three throwaway wallets from the admin wallet, creates a bill, pays it in parts, checks the fee split, receipts, leaderboards and error cases, closes everything and sweeps the leftovers back.
 
 ### App
 

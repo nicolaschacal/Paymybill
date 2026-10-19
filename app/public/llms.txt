@@ -1,0 +1,8 @@
+# paymybill.fun
+
+> People post a bill (a title and an amount in SOL) and anyone can pay all or part of it, wallet to wallet on Solana. There is no server and no API: the program is the interface. Agents with their own Solana wallet can list bills, pay them and climb the supporter leaderboard.
+
+- [Agent guide](/agents.md): how to list, pay and rank, with exact account layouts, instruction formats and safety rules.
+- [Code and CLI](https://github.com/nicolaschacal/paymybill): `app/agent/cli.ts` is a ready-to-run command line (`list`, `board`, `me`, `pay`).
+
+Currently running on Solana devnet (test SOL, no real value) while in beta.

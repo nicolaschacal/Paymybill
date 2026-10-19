@@ -885,3 +885,248 @@ textarea::placeholder {
   justify-content: center;
   margin-top: 18px;
 }
+
+/* ---------- leaderboard ---------- */
+.board {
+  margin-top: 8px;
+  padding: 18px 18px 14px;
+  background: var(--panel);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+}
+.board-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.board-head h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+.board .fine {
+  margin: 4px 0 10px;
+}
+.board .seg button {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+.board-rows {
+  display: flex;
+  flex-direction: column;
+}
+.board-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 2px;
+  border-top: 1px solid var(--line);
+}
+.board-row.skel {
+  height: 44px;
+  border-radius: 8px;
+}
+.board-row .rank {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--tint);
+  font-weight: 900;
+  font-size: 13px;
+}
+.board-row.first .rank {
+  background: var(--red);
+  color: var(--on-red);
+}
+.who {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.who b {
+  font-weight: 800;
+}
+.handle {
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 13px;
+  text-decoration: none;
+}
+.handle:hover {
+  color: var(--red);
+}
+.amt.sm {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.amt.sm small {
+  font-size: 12px;
+}
+.board-empty {
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 14px;
+  padding: 14px 2px 8px;
+  border-top: 1px solid var(--line);
+}
+
+/* ---------- progress / partial payment ---------- */
+.progress {
+  margin-top: 10px;
+}
+.progress .bar {
+  height: 7px;
+  background: var(--tint);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress .bar i {
+  display: block;
+  height: 100%;
+  background: var(--red);
+  border-radius: 999px;
+}
+.progress span {
+  display: block;
+  margin-top: 5px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.progress-box {
+  margin-top: 18px;
+}
+.progress-box .progress {
+  margin-top: 0;
+}
+.progress-box .fine {
+  margin: 6px 0 0;
+}
+.chips {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.chip-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 9px 4px;
+  border: 1.5px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  border-radius: 14px;
+  font: inherit;
+  font-weight: 800;
+  font-size: 14px;
+  cursor: pointer;
+  min-width: 0;
+}
+.chip-btn small {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.chip-btn.on {
+  border-color: var(--ink);
+  background: var(--tint);
+}
+.chip-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.chip-btn.input {
+  cursor: text;
+}
+.chip-btn.input input::placeholder {
+  color: var(--ink);
+  opacity: 1;
+}
+.chip-btn.input input {
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 0;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 800;
+  border-radius: 0;
+}
+.fine.bad {
+  color: var(--red);
+  font-weight: 700;
+}
+.teaser {
+  margin: 4px 0 14px;
+  padding: 9px 12px;
+  background: var(--tint-2);
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 800;
+  text-align: center;
+}
+.idfields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.pay-box > .link {
+  display: block;
+  margin: 0 auto 14px;
+}
+.backers {
+  margin-top: 22px;
+}
+.backer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 2px;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+  font-weight: 700;
+}
+.backers .sec-title {
+  margin: 0 0 6px;
+}
+.backers .fine {
+  margin: 6px 0 0;
+}
+
+/* ---------- supporter card (My bills) ---------- */
+.mycard {
+  margin-bottom: 10px;
+}
+.mycard .sec-title {
+  margin-top: 0;
+}
+.mycard-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0 6px;
+}
+.mycard-form input {
+  flex: 1 1 140px;
+  width: auto;
+  padding: 9px 12px;
+  font-size: 14px;
+}
+.mycard .fine {
+  margin: 4px 0;
+}

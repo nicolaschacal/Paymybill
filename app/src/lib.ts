@@ -18,6 +18,13 @@ export function timeAgo(ts: number): string {
   return new Date(ts * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+export function fmtDuration(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
 export function fmtSol(lamports: bigint | number, max = 4): string {
   const sol = Number(lamports) / LAMPORTS_PER_SOL;
   if (sol === 0) return "0";
