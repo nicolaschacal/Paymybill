@@ -104,6 +104,37 @@ function useBills(creator?: PublicKey) {
   return { bills, error, reload };
 }
 
+/** Bills the wallet created plus bills it paid (two filtered queries, merged). */
+function useMyBills(user?: PublicKey) {
+  const { connection } = useConnection();
+  const [bills, setBills] = useState<Bill[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const key = user?.toBase58() ?? "none";
+  const reload = useCallback(async () => {
+    if (!user) return;
+    setError(null);
+    try {
+      const [made, paid] = await Promise.all([
+        fetchBills(connection, { creator: user }),
+        fetchBills(connection, { payer: user }),
+      ]);
+      const seen = new Map<string, Bill>();
+      for (const b of [...made, ...paid]) seen.set(b.address.toBase58(), b);
+      const when = (b: Bill) => (b.paid && b.payer?.equals(user) ? b.paidAt : b.createdAt);
+      setBills([...seen.values()].sort((x, y) => when(y) - when(x)));
+    } catch (e) {
+      setError(friendlyError(e));
+      setBills((b) => b ?? []);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connection, key]);
+  useEffect(() => {
+    setBills(null);
+    reload();
+  }, [reload]);
+  return { bills, error, reload };
+}
+
 function useSender() {
   const { connection } = useConnection();
   const { publicKey, sendTransaction } = useWallet();
@@ -232,7 +263,17 @@ function Amount({ lamports, usd, big }: { lamports: bigint; usd: number | null; 
   );
 }
 
-function BillCard({ bill, usd, mine }: { bill: Bill; usd: number | null; mine: boolean }) {
+function BillCard({
+  bill,
+  usd,
+  mine,
+  paidByMe,
+}: {
+  bill: Bill;
+  usd: number | null;
+  mine: boolean;
+  paidByMe?: boolean;
+}) {
   return (
     <a className={"card" + (bill.paid ? " paid" : "")} href={`#/b/${bill.address.toBase58()}`}>
       <div className="card-main">
@@ -241,6 +282,7 @@ function BillCard({ bill, usd, mine }: { bill: Bill; usd: number | null; mine: b
         <div className="card-meta">
           <span className="pill">{short(bill.creator)}</span>
           {mine && <span className="pill dark">yours</span>}
+          {paidByMe && <span className="pill dark">you paid</span>}
           <span>{timeAgo(bill.createdAt)}</span>
         </div>
       </div>
@@ -507,7 +549,7 @@ function NewBill() {
 function Mine() {
   const { publicKey } = useWallet();
   const usd = useSolUsd();
-  const { bills, error, reload } = useBills(publicKey ?? undefined);
+  const { bills, error, reload } = useMyBills(publicKey ?? undefined);
   const send = useSender();
   const toast = useToast();
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -530,6 +572,59 @@ function Mine() {
     }
   }
 
+  function Section({ title, items }: { title: string; items: Bill[] }) {
+    return (
+      <>
+        <h3 className="sec-title">
+          {title} <span>{items.length}</span>
+        </h3>
+        {items.length === 0 ? (
+          <div className="sec-empty">Nothing here yet.</div>
+        ) : (
+          <div className="list">
+            {items.map((b) => {
+              const k = b.address.toBase58();
+              if (!b.creator.equals(publicKey!)) {
+                return <BillCard key={k} bill={b} usd={usd} mine={false} paidByMe />;
+              }
+              return (
+                <div key={k} className="mine-row">
+                  <BillCard bill={b} usd={usd} mine />
+                  <div className="mine-actions">
+                    <button
+                      className="link"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(billLink(k));
+                        toast("Link copied");
+                      }}
+                    >
+                      Copy link
+                    </button>
+                    {confirming === k ? (
+                      <span className="confirm">
+                        {b.paid ? "Remove record and refund deposit?" : "Cancel this bill?"}
+                        <button className="link danger" disabled={busy === k} onClick={() => close(b)}>
+                          {busy === k ? "Closing…" : "Yes"}
+                        </button>
+                        <button className="link" onClick={() => setConfirming(null)}>
+                          No
+                        </button>
+                      </span>
+                    ) : (
+                      <button className="link danger" onClick={() => setConfirming(k)}>
+                        {b.paid ? "Remove" : "Cancel bill"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </>
+    );
+  }
+
   return (
     <>
       <div className="page-head">
@@ -542,48 +637,19 @@ function Mine() {
       {bills === null ? (
         <Skeletons />
       ) : bills.length === 0 ? (
-        <Empty title="You haven’t posted any bills">
+        <Empty title="No bills yet">
           <a className="btn red" href="#/new">
             Post your first bill
           </a>
         </Empty>
       ) : (
-        <div className="list">
-          {bills.map((b) => {
-            const k = b.address.toBase58();
-            return (
-              <div key={k} className="mine-row">
-                <BillCard bill={b} usd={usd} mine />
-                <div className="mine-actions">
-                  <button
-                    className="link"
-                    onClick={() => {
-                      navigator.clipboard?.writeText(billLink(k));
-                      toast("Link copied");
-                    }}
-                  >
-                    Copy link
-                  </button>
-                  {confirming === k ? (
-                    <span className="confirm">
-                      {b.paid ? "Remove record and refund deposit?" : "Cancel this bill?"}
-                      <button className="link danger" disabled={busy === k} onClick={() => close(b)}>
-                        {busy === k ? "Closing…" : "Yes"}
-                      </button>
-                      <button className="link" onClick={() => setConfirming(null)}>
-                        No
-                      </button>
-                    </span>
-                  ) : (
-                    <button className="link danger" onClick={() => setConfirming(k)}>
-                      {b.paid ? "Remove" : "Cancel bill"}
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <>
+          <Section title="Bills I posted" items={bills.filter((b) => b.creator.equals(publicKey))} />
+          <Section
+            title="Bills I paid"
+            items={bills.filter((b) => b.payer?.equals(publicKey) && !b.creator.equals(publicKey))}
+          />
+        </>
       )}
     </>
   );

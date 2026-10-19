@@ -115,13 +115,14 @@ export function decodeBill(address: PublicKey, data: Uint8Array): Bill | null {
 
 export async function fetchBills(
   conn: Connection,
-  opts: { creator?: PublicKey } = {},
+  opts: { creator?: PublicKey; payer?: PublicKey } = {},
 ): Promise<Bill[]> {
   const filters: { dataSize: number }[] | any[] = [
     { dataSize: BILL_ACCOUNT_SIZE },
     { memcmp: { offset: 0, bytes: bs58.encode(BILL_DISC) } },
   ];
   if (opts.creator) filters.push({ memcmp: { offset: 10, bytes: opts.creator.toBase58() } });
+  if (opts.payer) filters.push({ memcmp: { offset: 74, bytes: opts.payer.toBase58() } });
   const accts = await conn.getProgramAccounts(PROGRAM_ID, { filters, commitment: "confirmed" });
   const out: Bill[] = [];
   for (const a of accts) {
