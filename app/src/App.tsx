@@ -52,6 +52,8 @@ import type { Bill, BillRef, Receipt, Supporter, SupporterRef } from "./chain";
 import { billLink, billPath, fmtDuration, fmtSol, fmtUsd, friendlyError, parseAmount, parseBillParam, short, timeAgo } from "./lib";
 
 const REPO_URL = "https://github.com/nicolaschacal/paymybill";
+const X_URL = "https://x.com/paymybillfun";
+const IS_TEST_NETWORK = CLUSTER !== "mainnet-beta";
 
 /* ---------------------------------------------------------------- toast */
 
@@ -625,7 +627,7 @@ function Explore() {
           <br />
           <span className="red">A stranger pays it.</span>
         </h1>
-        <p>Wallet to wallet on Solana. No servers, no middlemen, no custody.</p>
+        <p>Share a bill. Anyone can chip in, wallet to wallet on Solana.</p>
         <div className="hero-actions">
           <a className="btn red lg" href="/new">
             Post a bill
@@ -634,6 +636,11 @@ function Explore() {
             How it works
           </a>
         </div>
+        <p className="follow-updates">
+          <a href={X_URL} target="_blank" rel="noreferrer">
+            {IS_TEST_NETWORK ? "Follow the beta on X ↗" : "Follow PayMyBill on X ↗"}
+          </a>
+        </p>
       </section>
 
       <Leaderboard />
@@ -1361,8 +1368,15 @@ function BillPage({ addr }: { addr: string }) {
     );
   };
 
-  const shareText = encodeURIComponent(`I just helped pay "${bill.title}" on paymybill.fun`);
-  const shareHref = `https://x.com/intent/post?text=${shareText}&url=${encodeURIComponent(billLink(bill))}`;
+  const shareUrl = new URL(billLink(bill));
+  shareUrl.searchParams.set("utm_source", "x");
+  shareUrl.searchParams.set("utm_medium", "social");
+  shareUrl.searchParams.set("utm_campaign", "bill_share");
+  const testLabel = IS_TEST_NETWORK ? `Demo on ${CLUSTER} — test SOL only. ` : "";
+  const shareText = encodeURIComponent(`${testLabel}I just helped pay "${bill.title}" on @paymybillfun.`);
+  const shareHref = `https://x.com/intent/post?text=${shareText}&url=${encodeURIComponent(shareUrl.toString())}`;
+  const creatorShareText = encodeURIComponent(`${testLabel}I posted "${bill.title}" on @paymybillfun. Anyone can chip in.`);
+  const creatorShareHref = `https://x.com/intent/post?text=${creatorShareText}&url=${encodeURIComponent(shareUrl.toString())}`;
 
   return (
     <div className="panel detail">
@@ -1433,6 +1447,9 @@ function BillPage({ addr }: { addr: string }) {
               Copy
             </button>
           </div>
+          <a className="link" href={creatorShareHref} target="_blank" rel="noreferrer">
+            Share your bill on X ↗
+          </a>
         </div>
       ) : !publicKey ? (
         <div className="pay-box">
@@ -1652,12 +1669,22 @@ export function App() {
         </div>
       </header>
 
-      <main className="wrap">{page}</main>
+      <main className="wrap">
+        {IS_TEST_NETWORK && (
+          <aside className="network-notice" aria-label="Test network notice">
+            <strong>Beta on {CLUSTER}.</strong> Test SOL only. This version does not pay real bills.
+          </aside>
+        )}
+        {page}
+      </main>
 
       <footer className="wrap foot">
         <span>No servers. Everything lives on Solana.</span>
         <span className="foot-links">
           {CLUSTER !== "mainnet-beta" && <span className="pill dark">{CLUSTER}</span>}
+          <a href={X_URL} target="_blank" rel="noreferrer">
+            Follow on X ↗
+          </a>
           <a href={explorerAddr(PROGRAM_ID.toBase58())} target="_blank" rel="noreferrer">
             Program ↗
           </a>

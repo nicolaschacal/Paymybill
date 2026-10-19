@@ -80,6 +80,23 @@ main.wrap {
   padding-bottom: 56px;
 }
 
+.network-notice {
+  margin-top: 20px;
+  padding: 12px 16px;
+  background: var(--panel);
+  border: 1px solid var(--red);
+  border-radius: 12px;
+  font-size: 14px;
+}
+.hero .follow-updates {
+  margin: 18px 0 0;
+  font-size: 15px;
+}
+.follow-updates a {
+  color: var(--ink);
+  text-underline-offset: 3px;
+}
+
 /* ---------- header ---------- */
 .top {
   position: sticky;
