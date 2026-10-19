@@ -173,7 +173,8 @@ const Logo = () => (
   <svg width="30" height="30" viewBox="0 0 64 64" aria-hidden>
     <rect width="64" height="64" rx="17" fill="var(--red)" />
     <path d="M20 17h24v31l-6-4.2-6 4.2-6-4.2-6 4.2z" fill="var(--panel)" />
-    <path d="M26 26h12M26 32h12" stroke="var(--red)" strokeWidth="3" strokeLinecap="round" />
+    <path d="M27 22.5v6M37 22.5v6" stroke="var(--red)" strokeWidth="3.6" strokeLinecap="round" />
+    <path d="M26 35h12" stroke="var(--red)" strokeWidth="3" strokeLinecap="round" />
   </svg>
 );
 

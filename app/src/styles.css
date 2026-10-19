@@ -874,3 +874,8 @@ textarea::placeholder {
 .top-in .theme {
   margin-left: 0;
 }
+@media (max-width: 520px) {
+  .top-in .theme {
+    margin-left: auto;
+  }
+}
